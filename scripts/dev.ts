@@ -13,4 +13,4 @@ const server = Bun.serve({
   },
 });
 
-console.log(`Sow's Ear dev server: http://localhost:${server.port}`);
+console.log(`Cowslip dev server: http://localhost:${server.port}`);

@@ -1,4 +1,4 @@
-# Sow's Ear
+# Cowslip
 
 A cooperative word game where every letter counts.
 

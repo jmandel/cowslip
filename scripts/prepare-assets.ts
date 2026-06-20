@@ -53,6 +53,43 @@ async function transparentCrop(
     .toFile(output);
 }
 
+async function distanceAlphaCrop(
+  input: string,
+  extract: { left: number; top: number; width: number; height: number },
+  resizeWidth: number,
+): Promise<Buffer> {
+  const image = sharp(input).extract(extract).resize({ width: resizeWidth, withoutEnlargement: false }).ensureAlpha();
+  const { data, info } = await image.raw().toBuffer({ resolveWithObject: true });
+  for (let i = 0; i < data.length; i += info.channels) {
+    const r = data[i] ?? 0;
+    const g = data[i + 1] ?? 0;
+    const b = data[i + 2] ?? 0;
+    const dist = Math.hypot(255 - r, 255 - g, 255 - b);
+    let alpha = clampByte((dist - 10) * 5.2);
+    if (r > 248 && g > 248 && b > 248) alpha = 0;
+    data[i + 3] = alpha;
+    if (alpha === 0) {
+      data[i] = 255;
+      data[i + 1] = 255;
+      data[i + 2] = 255;
+    }
+  }
+  return sharp(data, {
+    raw: {
+      width: info.width,
+      height: info.height,
+      channels: info.channels,
+    },
+  })
+    .trim({ background: { r: 255, g: 255, b: 255, alpha: 0 } })
+    .png()
+    .toBuffer();
+}
+
+function clampByte(value: number): number {
+  return Math.max(0, Math.min(255, Math.round(value)));
+}
+
 function normalizePadding(padding: CropPadding): { top: number; right: number; bottom: number; left: number } {
   if (typeof padding === "number") {
     return { top: padding, right: padding, bottom: padding, left: padding };
@@ -259,6 +296,30 @@ await transparentCrop("sowsear-title-header.png", `${outDir}/brand-title-header.
   maxSpread: 46,
   padding: 4,
 });
+
+const cowslipBloom = await distanceAlphaCrop("cowslip-art.png", {
+  left: 220,
+  top: 34,
+  width: 377,
+  height: 360,
+}, 820);
+await sharp(cowslipBloom)
+  .webp({ quality: 86, alphaQuality: 90, effort: 6 })
+  .toFile(`${outDir}/cowslip-bloom.webp`);
+await sharp(cowslipBloom)
+  .resize({ width: 96, height: 96, fit: "contain", background: { r: 255, g: 255, b: 255, alpha: 0 } })
+  .png({ compressionLevel: 9, effort: 10 })
+  .toFile(`${outDir}/cowslip-icon.png`);
+
+const cowslipRosette = await distanceAlphaCrop("cowslip-art.png", {
+  left: 0,
+  top: 758,
+  width: 365,
+  height: 305,
+}, 760);
+await sharp(cowslipRosette)
+  .webp({ quality: 86, alphaQuality: 90, effort: 6 })
+  .toFile(`${outDir}/cowslip-rosette.webp`);
 
 const source = sharp("sowsear-letters.png").ensureAlpha();
 const { data, info } = await source.raw().toBuffer({ resolveWithObject: true });

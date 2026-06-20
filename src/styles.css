@@ -261,20 +261,22 @@ h2 {
 }
 
 .hero {
-  min-height: calc(100vh - 100px);
+  min-height: max(560px, calc(100vh - 180px));
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(300px, 440px);
-  gap: clamp(28px, 8vw, 96px);
+  grid-template-columns: minmax(0, 1.25fr) minmax(300px, 440px);
+  gap: clamp(28px, 6vw, 76px);
   align-items: center;
 }
 
 .plain-lockup {
   display: grid;
-  gap: 8px;
+  align-content: center;
+  gap: clamp(16px, 3vw, 28px);
+  position: relative;
 }
 
 .plain-lockup h1 {
-  font-size: clamp(2.75rem, 11vw, 7rem);
+  font-size: clamp(3.4rem, 11vw, 8rem);
   line-height: 0.95;
   margin: 0;
 }
@@ -282,6 +284,36 @@ h2 {
 .plain-lockup p {
   max-width: 26rem;
   font-size: clamp(1.05rem, 2vw, 1.35rem);
+}
+
+.landing-copy {
+  position: relative;
+  z-index: 1;
+}
+
+.landing-art {
+  position: relative;
+  min-height: clamp(260px, 43vw, 440px);
+}
+
+.landing-art img {
+  display: block;
+  pointer-events: none;
+  user-select: none;
+}
+
+.landing-bloom {
+  position: absolute;
+  width: min(78%, 520px);
+  right: 0;
+  top: 0;
+}
+
+.landing-rosette {
+  position: absolute;
+  width: min(54%, 350px);
+  left: 0;
+  bottom: 0;
 }
 
 .room-entry-stack,
@@ -820,6 +852,25 @@ textarea {
     min-height: auto;
     grid-template-columns: 1fr;
     align-content: start;
+    gap: 18px;
+  }
+
+  .plain-lockup {
+    min-height: auto;
+    gap: 14px;
+  }
+
+  .landing-art {
+    min-height: clamp(210px, 70vw, 330px);
+  }
+
+  .landing-bloom {
+    width: min(72%, 290px);
+    right: 0;
+  }
+
+  .landing-rosette {
+    width: min(52%, 220px);
   }
 
   .paper-panel,

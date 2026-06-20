@@ -549,7 +549,7 @@ function Shell({ hideHeaderBrand }: { hideHeaderBrand?: boolean }): React.ReactE
       ) : (
         <div className="topbar-brand">
           <a className="wordmark" href="./">
-            Word Game
+            Cowslip
           </a>
         </div>
       )}
@@ -685,8 +685,14 @@ function RoomEntry(): React.ReactElement {
   return (
     <section className="hero">
       <div className="plain-lockup">
-        <h1>Word Game</h1>
-        <p>A cooperative word game where every letter counts.</p>
+        <div className="landing-copy">
+          <h1>Cowslip</h1>
+          <p>A cooperative word game where every letter counts.</p>
+        </div>
+        <div className="landing-art" aria-hidden="true">
+          <img src="./assets/cowslip-bloom.webp" alt="" className="landing-bloom" />
+          <img src="./assets/cowslip-rosette.webp" alt="" className="landing-rosette" />
+        </div>
       </div>
       <div className="room-entry-stack">
         <form

@@ -581,7 +581,8 @@ describe("Chromium CDP app flow", () => {
     const navigationCount = await page.eval<number>(`performance.getEntriesByType('navigation').length`);
     await page.waitFor(`document.querySelector('.plain-lockup')`);
     expect(await page.eval<number>(`document.querySelectorAll('.brand-title, .brand-pig, .handle-mascot').length`)).toBe(0);
-    expect(await page.eval<boolean>(`document.querySelector('.plain-lockup')?.innerText.includes("Word Game")`)).toBe(true);
+    expect(await page.eval<boolean>(`document.querySelector('.plain-lockup')?.innerText.includes("Cowslip")`)).toBe(true);
+    expect(await page.eval<number>(`document.querySelectorAll('.landing-art img').length`)).toBe(2);
     await page.click("help-button");
     await page.waitFor(`document.querySelector('[data-testid="help-dialog"]')?.open === true`);
     expect(await page.eval<boolean>(`document.body.innerText.includes('How to Play') && document.body.innerText.includes('Scoring')`)).toBe(true);
@@ -603,6 +604,7 @@ describe("Chromium CDP app flow", () => {
     await page.pressEnter();
     await page.waitFor(`document.querySelector('[data-testid="create-season"]')`);
     expect(await page.eval<string>(`document.activeElement?.dataset?.testid ?? ''`)).toBe("create-season");
+    expect(await page.eval<number>(`document.querySelectorAll('.landing-art img').length`)).toBe(0);
 
     expect(await page.eval<number>(`performance.getEntriesByType('navigation').length`)).toBe(navigationCount);
     expect(await page.eval<boolean>(`document.body.innerText.includes('Alice')`)).toBe(true);
@@ -621,6 +623,10 @@ describe("Chromium CDP app flow", () => {
     const room = `cdp-share-${Date.now().toString(36)}`;
     const page = await newPage(`/?local=1`);
     await page.send("Storage.clearDataForOrigin", { origin: appUrl, storageTypes: "local_storage" });
+    await page.eval(`localStorage.clear()`);
+    await page.send("Page.navigate", { url: `${appUrl}/?local=1` });
+    await page.waitFor("document.readyState === 'complete'");
+    await page.eval(`localStorage.clear()`);
     await page.send("Page.navigate", { url: `${appUrl}/?local=1` });
     await page.waitFor("document.readyState === 'complete'");
     await page.waitFor(`document.querySelector('[data-testid="room-input"]')`);

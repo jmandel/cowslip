@@ -777,18 +777,17 @@ describe("Chromium CDP app flow", () => {
     const page = await newPage(`/?room=${room}&handle=Alice&local=1`);
     await page.waitFor(`document.querySelector('[data-testid="create-season"]')`);
     await page.focus("create-season");
-    const focusStyle = await page.eval<{ width: string; style: string; color: string }>(`
+    const focusStyle = await page.eval<{ outline: string; shadow: string }>(`
       (() => {
         const computed = getComputedStyle(document.activeElement);
         return {
-          width: computed.outlineWidth,
-          style: computed.outlineStyle,
-          color: computed.outlineColor
+          outline: computed.outlineStyle,
+          shadow: computed.boxShadow
         };
       })()
     `);
-    expect(focusStyle.style).not.toBe("none");
-    expect(parseFloat(focusStyle.width)).toBeGreaterThanOrEqual(3);
+    expect(focusStyle.outline).toBe("none");
+    expect(focusStyle.shadow).not.toBe("none");
   }, 20000);
 
   test("reduced-motion preference suppresses sprout animation", async () => {

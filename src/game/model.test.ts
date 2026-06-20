@@ -31,7 +31,7 @@ import {
   rowsHeldForClue,
 } from "./model";
 import { clampLetter } from "./rules";
-import type { CommandResult, RoomState, SowsEarEvent } from "./types";
+import type { ClueCellInput, CommandResult, RoomState, SowsEarEvent } from "./types";
 
 function apply(state: RoomState, result: CommandResult): RoomState {
   expect(result.ok).toBe(true);
@@ -338,6 +338,51 @@ describe("room command model", () => {
     expect(round.phase).toBe("farmer-call");
     expect(round.entries.filter((entry) => entry.rowIndex === 0)).toHaveLength(1);
     expect(round.entries.filter((entry) => entry.depth === 2)).toHaveLength(3);
+  });
+
+  test("a skipped clue cell is a stored blank and stays editable on later depths", () => {
+    let state = chooseCurrentFieldAndSeed(startThreePlayerGame(), "Bale");
+    const badSkipAndLetter = commandPlantLetters(state, "Bob", new Map<number, string | ClueCellInput>([[0, { letter: "C", skipped: true }], [1, "B"]]));
+    expect(badSkipAndLetter.ok).toBe(false);
+    const badSkipAndEnd = commandPlantLetters(state, "Bob", new Map<number, string | ClueCellInput>([[0, { skipped: true, endsWord: true }], [1, "B"]]));
+    expect(badSkipAndEnd.ok).toBe(false);
+
+    state = applyRemembered(state, commandPlantLetters(state, "Bob", new Map<number, string | ClueCellInput>([[0, { skipped: true }], [1, "B"]])));
+    state = applyRemembered(state, commandPlantLetters(state, "Cora", new Map([[2, "H"], [3, "W"]])));
+
+    let round = currentRound(activeGame(state)!)!;
+    expect(round.phase).toBe("farmer-call");
+    const skipped = round.entries.find((entry) => entry.rowIndex === 0)!;
+    expect(skipped.skipped).toBe(true);
+    expect(skipped.letter).toBe("");
+    expect(skipped.endsWord).toBe(false);
+
+    state = applyRemembered(state, commandWait(state, "Alice"));
+    round = currentRound(activeGame(state)!)!;
+    const rowZeroHolder = round.rows.find((row) => row.rowIndex === 0)!.currentHolderHandle;
+    expect(rowsHeldForClue(round, rowZeroHolder).some((row) => row.rowIndex === 0)).toBe(true);
+    expect(round.entries.filter((entry) => entry.rowIndex === 0)).toHaveLength(1);
+
+    const partialFill = commandPlantLetters(state, rowZeroHolder, new Map<number, string | ClueCellInput>([[0, "T"]]));
+    expect(partialFill.ok).toBe(false);
+
+    const heldRows = rowsHeldForClue(round, rowZeroHolder);
+    const fillEveryBlankAndAddOne = new Map<number, string | ClueCellInput>();
+    for (const row of heldRows) {
+      fillEveryBlankAndAddOne.set(
+        row.rowIndex,
+        row.rowIndex === 0
+          ? { cells: [{ depth: 1, letter: "A" }, { depth: 2, letter: "T" }] }
+          : { letter: "Q" },
+      );
+    }
+    state = applyRemembered(state, commandPlantLetters(state, rowZeroHolder, fillEveryBlankAndAddOne));
+    round = currentRound(activeGame(state)!)!;
+    const rowZeroEntries = round.entries.filter((entry) => entry.rowIndex === 0).sort((a, b) => a.depth - b.depth);
+    expect(rowZeroEntries.map((entry) => entry.letter)).toEqual(["A", "T"]);
+    expect(rowZeroEntries.map((entry) => entry.skipped)).toEqual([false, false]);
+    expect(rowZeroEntries.map((entry) => entry.handle)).toEqual([rowZeroHolder, rowZeroHolder]);
+    expect(rowZeroEntries.map((entry) => entry.filledAtDepth)).toEqual([2, 2]);
   });
 
   test("trySprout resolves complete planting after stale clients submit without seeing each other", () => {

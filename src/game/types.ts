@@ -54,13 +54,20 @@ export type ClueEntry = {
   depth: number;
   handle: string;
   letter: string;
+  skipped: boolean;
   endsWord: boolean;
   sprouted: boolean;
+  filledAtDepth?: number;
   createdAt: number;
 };
 
 export type ClueCellInput = {
-  letter: string;
+  letter?: string;
+  cells?: Array<{
+    depth: number;
+    letter: string;
+  }>;
+  skipped?: boolean;
   endsWord?: boolean;
 };
 

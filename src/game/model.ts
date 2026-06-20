@@ -80,6 +80,23 @@ export function rowIsComplete(round: Round, rowIndex: number): boolean {
   return round.entries.some((entry) => entry.rowIndex === rowIndex && entry.endsWord);
 }
 
+export function rowEntriesThroughDepth(round: Round, rowIndex: number, depth = round.depth): ClueEntry[] {
+  return round.entries
+    .filter((entry) => entry.rowIndex === rowIndex && entry.depth <= depth)
+    .sort((a, b) => a.depth - b.depth);
+}
+
+export function trailingBlankEntriesForRow(round: Round, rowIndex: number, beforeDepth = round.depth): ClueEntry[] {
+  const entries = rowEntriesThroughDepth(round, rowIndex, beforeDepth - 1);
+  const trailing: ClueEntry[] = [];
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = entries[index]!;
+    if (!entry.skipped) break;
+    trailing.unshift(entry);
+  }
+  return trailing;
+}
+
 export function activeRowsForDepth(round: Round): Row[] {
   return round.rows.filter((row) => !rowEndedBeforeDepth(round, row.rowIndex, round.depth));
 }
@@ -270,8 +287,22 @@ function applyEvent(state: RoomState, event: SowsEarEvent): void {
       if (!round || round.phase !== "planting") return;
       const entries = arrayPayload<ClueEntry>(event, "entries");
       for (const entry of entries) {
-        if (round.entries.some((item) => entryKey(item) === entryKey(entry))) continue;
-        round.entries.push({ ...entry, endsWord: Boolean(entry.endsWord), sprouted: false, createdAt: event.createdAt });
+        const existing = round.entries.find((item) => entryKey(item) === entryKey(entry));
+        const nextEntry: ClueEntry = {
+          ...entry,
+          letter: entry.letter ?? "",
+          skipped: Boolean(entry.skipped),
+          endsWord: Boolean(entry.endsWord) && !entry.skipped,
+          sprouted: false,
+          filledAtDepth: typeof entry.filledAtDepth === "number" ? entry.filledAtDepth : entry.depth,
+          createdAt: event.createdAt,
+        };
+        if (existing) {
+          if (!existing.skipped || nextEntry.skipped || !nextEntry.letter) continue;
+          Object.assign(existing, nextEntry);
+          continue;
+        }
+        round.entries.push(nextEntry);
       }
       round.updatedAt = event.createdAt;
       return;
@@ -280,7 +311,7 @@ function applyEvent(state: RoomState, event: SowsEarEvent): void {
       const round = roundForEvent(game, event);
       if (!round || round.phase !== "planting") return;
       for (const entry of round.entries) {
-        if (entry.depth === round.depth) entry.sprouted = true;
+        if (entry.depth <= round.depth) entry.sprouted = true;
       }
       round.phase = "farmer-call";
       round.phaseVersion += 1;
@@ -746,20 +777,56 @@ export function commandPlantLetters(state: RoomState, handle: string, lettersByR
   const canonicalHandle = displayHandleForGame(game, handle);
   for (const row of heldRows) {
     const input = lettersByRow.get(row.rowIndex);
-    const letter = typeof input === "string" ? input : input?.letter;
+    const skipped = typeof input === "string" ? false : Boolean(input?.skipped);
     const endsWord = typeof input === "string" ? false : Boolean(input?.endsWord);
-    if (!letter) return { ok: false, error: "Add one letter for each Row you hold." };
-    const normalizedLetter = letter.toLocaleUpperCase("en-US");
-    if (!isValidLetter(normalizedLetter)) return { ok: false, error: "Add a single letter." };
-    entries.push({
-      rowIndex: row.rowIndex,
-      depth: round.depth,
-      handle: canonicalHandle,
-      letter: normalizedLetter,
-      endsWord,
-      sprouted: false,
-      createdAt: Date.now(),
-    });
+    const cells = normalizedInputCells(input, round.depth);
+    const priorEntries = rowEntriesThroughDepth(round, row.rowIndex, round.depth - 1);
+    const firstBlankIndex = priorEntries.findIndex((entry) => entry.skipped);
+    if (firstBlankIndex >= 0 && priorEntries.slice(firstBlankIndex).some((entry) => !entry.skipped)) {
+      return { ok: false, error: "Blank cells must stay at the end of a row." };
+    }
+    const trailingBlanks = trailingBlankEntriesForRow(round, row.rowIndex);
+
+    if (skipped) {
+      if (cells.length) return { ok: false, error: "Choose either letters or one blank cell." };
+      if (endsWord) return { ok: false, error: "A blank cell cannot end a word." };
+      entries.push({
+        rowIndex: row.rowIndex,
+        depth: round.depth,
+        handle: canonicalHandle,
+        letter: "",
+        skipped: true,
+        endsWord: false,
+        sprouted: false,
+        filledAtDepth: round.depth,
+        createdAt: Date.now(),
+      });
+      continue;
+    }
+
+    const expectedDepths = [...trailingBlanks.map((entry) => entry.depth), round.depth];
+    if (cells.length !== expectedDepths.length) {
+      return { ok: false, error: "Fill every trailing blank and add one letter, or add one blank cell." };
+    }
+    const cellsByDepth = new Map(cells.map((cell) => [cell.depth, cell.letter.toLocaleUpperCase("en-US")]));
+    if (cellsByDepth.size !== cells.length || expectedDepths.some((depth) => !cellsByDepth.has(depth))) {
+      return { ok: false, error: "Only trailing blanks and the next cell can be filled." };
+    }
+    for (const depth of expectedDepths) {
+      const normalizedLetter = cellsByDepth.get(depth) ?? "";
+      if (!isValidLetter(normalizedLetter)) return { ok: false, error: "Add one letter in each required cell." };
+      entries.push({
+        rowIndex: row.rowIndex,
+        depth,
+        handle: canonicalHandle,
+        letter: normalizedLetter,
+        skipped: false,
+        endsWord: depth === round.depth && endsWord,
+        sprouted: false,
+        filledAtDepth: round.depth,
+        createdAt: Date.now(),
+      });
+    }
   }
   const baseEvent = eventOf(
     state,
@@ -785,6 +852,13 @@ export function commandPlantLetters(state: RoomState, handle: string, lettersByR
     );
   }
   return { ok: true, events };
+}
+
+function normalizedInputCells(input: string | ClueCellInput | undefined, currentDepth: number): Array<{ depth: number; letter: string }> {
+  if (!input) return [];
+  if (typeof input === "string") return input ? [{ depth: currentDepth, letter: input }] : [];
+  if (input.cells) return input.cells.map((cell) => ({ depth: cell.depth, letter: cell.letter }));
+  return input.letter ? [{ depth: currentDepth, letter: input.letter }] : [];
 }
 
 export function commandTrySprout(state: RoomState, handle: string): CommandResult {

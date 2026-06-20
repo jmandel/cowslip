@@ -1,13 +1,13 @@
 import { DEFAULT_PACK_ID } from "../config";
 import type { DifficultyHint, Field } from "../game/types";
 
-// Fields name a *kind of thing*; the Sower invents a specific member each Harvest.
+// Fields name a kind of thing; the picker invents a specific member.
 // e.g. Planet -> Mars, Condiment -> Ketchup, Sci-Fi Movie -> Alien.
-// Keep them short and concrete so the sprouting letters stay interpretable.
+// Keep them short and concrete so the clue cells stay interpretable.
 const easy = [
   "Fruit",
   "Vegetable",
-  "Farm Animal",
+  "Animal",
   "Pet",
   "Ocean Animal",
   "Bird",

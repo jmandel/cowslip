@@ -33,12 +33,14 @@ import {
   normalizeHandle,
   reduceEvents,
   roleForHandle,
+  rowEntriesThroughDepth,
   rowIsComplete,
   rowsHeldForClue,
   roomSlugFrom,
+  trailingBlankEntriesForRow,
 } from "./game/model";
 import { clampLetter, pointsForDepth } from "./game/rules";
-import type { ClueCellInput, CommandResult, Game, RoomState, Round, Row } from "./game/types";
+import type { ClueCellInput, ClueEntry, CommandResult, Game, RoomState, Round, Row } from "./game/types";
 import { createEventStore, type EventStore } from "./store/event-store";
 
 type AppContext = {
@@ -124,11 +126,8 @@ type SowsEarState = {
 const APP_STORAGE_KEY = "sowsear:app";
 const PRESENCE_HEARTBEAT_MS = 15000;
 const PRESENCE_ONLINE_MS = 45000;
-const PEN_COLORS = ["#000000", "#0072b2", "#d55e00", "#009e73", "#cc79a7", "#e69f00", "#56b4e9", "#5f5f5f"] as const;
-
 type PenStyle = {
   index: number;
-  color: string;
 };
 
 function createRuntime(): SowsEarRuntime {
@@ -549,8 +548,8 @@ function Shell({ hideHeaderBrand }: { hideHeaderBrand?: boolean }): React.ReactE
         <div />
       ) : (
         <div className="topbar-brand">
-          <a className="wordmark" href="./" aria-label="Sow's Ear">
-            <img src="./assets/brand-title-header.png" alt="" />
+          <a className="wordmark" href="./">
+            Word Game
           </a>
         </div>
       )}
@@ -685,12 +684,9 @@ function RoomEntry(): React.ReactElement {
   const rememberedRooms = useSowsEarStore((state) => state.rememberedRooms);
   return (
     <section className="hero">
-      <div className="brand-lockup">
-        <img src="./assets/brand-pig.png" alt="" className="brand-pig" />
-        <div className="brand-copy">
-          <img src="./assets/brand-title.png" alt="Sow's Ear" className="brand-title" />
-          <p>A cooperative word game where every letter counts.</p>
-        </div>
+      <div className="plain-lockup">
+        <h1>Word Game</h1>
+        <p>A cooperative word game where every letter counts.</p>
       </div>
       <div className="room-entry-stack">
         <form
@@ -704,7 +700,7 @@ function RoomEntry(): React.ReactElement {
           <h2 className="card-title">Room</h2>
           <label className="field-control">
             <span className="sr-only">Room</span>
-            <input name="room" autoComplete="off" placeholder="farm-night" required data-testid="room-input" />
+            <input name="room" autoComplete="off" placeholder="room-name" required data-testid="room-input" />
           </label>
           <div className="action-row">
             <button type="submit" className="button primary" data-testid="enter-room">
@@ -751,7 +747,6 @@ function HandleClaim(): React.ReactElement {
           </button>
         </form>
       </div>
-      <img src="./assets/brand-pig.png" alt="" className="handle-mascot" />
     </section>
   );
 }
@@ -1098,19 +1093,27 @@ function PlantingPanel({ game, round, role, fieldTitle }: { game: Game; round: R
             event.preventDefault();
             const form = event.currentTarget;
             const letters = new Map<number, ClueCellInput>();
+            const formData = new FormData(form);
             for (const row of heldRows) {
-              const letter = clampLetter(formValue(form, `letter-${row.rowIndex}`));
-              const endsWord = new FormData(form).get(`end-${row.rowIndex}`) === "on";
-              if (letter) letters.set(row.rowIndex, { letter, endsWord });
+              const skipped = formData.get(`blank-${row.rowIndex}`) === "1";
+              const endsWord = formData.get(`end-${row.rowIndex}`) === "on";
+              if (skipped) {
+                letters.set(row.rowIndex, { skipped: true });
+                continue;
+              }
+              const cells = Array.from(form.querySelectorAll<HTMLInputElement>(`[data-row-index="${row.rowIndex}"].clue-letter-input`))
+                .map((input) => ({ depth: Number(input.dataset.depth ?? 0), letter: clampLetter(input.value) }))
+                .filter((cell) => cell.depth > 0 && cell.letter);
+              if (cells.length) letters.set(row.rowIndex, { cells, endsWord });
             }
             void plantLetters(letters);
           }}
         >
           <Rows game={game} round={round} revealAll={false} editableRows={heldRows} />
-          <PlantingStatus round={round} />
           <button className="button primary" type="submit" data-testid="submit-letters">
             Submit Clues
           </button>
+          <PlantingStatus round={round} />
         </form>
       ) : (
         <>
@@ -1406,37 +1409,51 @@ function Rows({
   return (
     <div className="rows" data-testid="rows">
       {round.rows.map((row) => {
-        const entries = [1, 2, 3, 4, 5].map((depth) => round.entries.find((entry) => entry.rowIndex === row.rowIndex && entry.depth === depth));
+        const limit = maxVisibleDepth ?? round.depth;
         const editable = editableRowIndexes.has(row.rowIndex);
+        const isComplete = rowIsComplete(round, row.rowIndex);
+        const hasCurrentEntry = round.entries.some((entry) => entry.rowIndex === row.rowIndex && entry.depth === round.depth);
+        const showPendingCell = !revealAll && !isComplete && !hasCurrentEntry && round.phase === "planting";
+        const trailingBlankDepths = new Set(
+          editable && showPendingCell ? trailingBlankEntriesForRow(round, row.rowIndex).map((entry) => entry.depth) : [],
+        );
+        const entries = rowEntriesThroughDepth(round, row.rowIndex, limit)
+          .filter((entry) => revealAll || maxVisibleDepth !== undefined || entry.sprouted || entry.depth < round.depth)
+          .sort((a, b) => a.depth - b.depth);
+        const cellCount = entries.length + (showPendingCell ? 1 : 0);
         return (
-          <div className={`hint-row ${revealAll ? "reveal" : ""} ${rowIsComplete(round, row.rowIndex) ? "complete" : ""}`} key={row.rowIndex}>
-            <span className="row-number">{row.rowIndex + 1}</span>
+          <div className={`hint-row ${revealAll ? "reveal" : ""} ${isComplete ? "complete" : ""}`} key={row.rowIndex}>
             <div className="row-main">
-              <div className="slots" aria-label={`Row ${row.rowIndex + 1}`}>
-                {entries.map((entry, index) => {
-                  const visible = entry && (maxVisibleDepth === undefined ? entry.sprouted || revealAll : entry.depth <= maxVisibleDepth);
-                  const isEditableCell = editable && index === round.depth - 1 && !entry;
-                  const pen = visible && entry ? penForHandle(game, entry.handle) : undefined;
+              <div className="slots" aria-label={`Row ${row.rowIndex + 1}`} data-cell-count={cellCount}>
+                {entries.map((entry) => {
+                  const pen = penForHandle(game, entry.handle);
+                  const filledAtDepth = entry.filledAtDepth ?? entry.depth;
+                  const displayAsBlank = entry.skipped || (maxVisibleDepth !== undefined && filledAtDepth > maxVisibleDepth) || (!revealAll && !entry.sprouted);
+                  if (showPendingCell && trailingBlankDepths.has(entry.depth)) {
+                    return (
+                      <span className="slot editing blank-fill" key={entry.depth} data-testid={`clue-cell-${row.rowIndex}-${entry.depth}`}>
+                        <ClueCellInputControl rowIndex={row.rowIndex} depth={entry.depth} />
+                      </span>
+                    );
+                  }
                   return (
                     <span
-                      className={`slot ${visible ? "filled" : ""} ${isEditableCell ? "editing" : ""} ${pen ? `pen-${pen.index}` : ""}`}
-                      style={pen ? penStyleVars(pen) : undefined}
-                      key={index}
-                      data-testid={`clue-cell-${row.rowIndex}-${index + 1}`}
+                      className={`slot filled frozen ${displayAsBlank ? "skipped" : ""} pen-${pen.index}`}
+                      key={entry.depth}
+                      data-testid={`clue-cell-${row.rowIndex}-${entry.depth}`}
+                      data-author={entry.handle}
                     >
-                      {isEditableCell ? (
-                        <ClueCellInputControl rowIndex={row.rowIndex} />
-                      ) : visible && entry ? (
-                        <ClueCellText letter={entry.letter} endsWord={entry.endsWord} handle={entry.handle} />
-                      ) : (
-                        <span className="clue-placeholder" aria-hidden="true">
-                          _
-                        </span>
-                      )}
+                      <ClueCellText entry={entry} displayAsBlank={displayAsBlank} />
                     </span>
                   );
                 })}
+                {showPendingCell ? (
+                  <span className={`slot ${editable ? "editing" : "pending"}`} data-testid={`clue-cell-${row.rowIndex}-${round.depth}`}>
+                    {editable ? <ClueCellInputControl rowIndex={row.rowIndex} depth={round.depth} /> : <span className="clue-placeholder" aria-hidden="true" />}
+                  </span>
+                ) : null}
               </div>
+              {editable ? <RowEntryTools rowIndex={row.rowIndex} /> : null}
             </div>
             {revealAll ? null : <span className="holder">{row.currentHolderHandle}</span>}
           </div>
@@ -1446,46 +1463,86 @@ function Rows({
   );
 }
 
-function ClueCellInputControl({ rowIndex }: { rowIndex: number }): React.ReactElement {
+function ClueCellInputControl({ rowIndex, depth }: { rowIndex: number; depth: number }): React.ReactElement {
   return (
-    <span className="cell-editor">
+    <span className="cell-editor" data-row-index={rowIndex}>
       <input
-        name={`letter-${rowIndex}`}
+        name={`letter-${rowIndex}-${depth}`}
         className="clue-letter-input"
         maxLength={1}
         autoComplete="off"
         required
-        aria-label={`Row ${rowIndex + 1} next letter`}
+        aria-label={`Row ${rowIndex + 1} cell ${depth}`}
+        data-row-index={rowIndex}
+        data-depth={depth}
         data-testid={`letter-input-${rowIndex}`}
         onInput={(event) => {
-          event.currentTarget.value = clampLetter(event.currentTarget.value);
+          const input = event.currentTarget;
+          if (input.value.trim() === "_") {
+            setRowBlankMode(input, true);
+            focusNextIncompleteLetter(input);
+            return;
+          }
+          input.value = clampLetter(input.value);
+          setRowBlankMode(input, false);
+          if (input.value) focusNextIncompleteLetter(input);
         }}
         onKeyDown={(event) => {
           if (event.key !== ".") return;
           event.preventDefault();
           const checkbox = event.currentTarget.form?.elements.namedItem(`end-${rowIndex}`);
-          if (checkbox instanceof HTMLInputElement) checkbox.checked = !checkbox.checked;
+          if (checkbox instanceof HTMLInputElement) {
+            checkbox.checked = !checkbox.checked;
+            setEndWordMarker(checkbox);
+          }
         }}
       />
-      <label className="word-end-toggle" title="Mark this cell as the end of a word">
-        <input type="checkbox" name={`end-${rowIndex}`} data-testid={`word-end-${rowIndex}`} />
-        <span>.</span>
-      </label>
     </span>
   );
 }
 
-function ClueCellText({ letter, endsWord, handle }: { letter: string; endsWord: boolean; handle: string }): React.ReactElement {
+function RowEntryTools({ rowIndex }: { rowIndex: number }): React.ReactElement {
   return (
-    <>
-      <span className="clue-letter" aria-label={`${letter}${endsWord ? " word end" : ""}`}>
-        {letter}
-        {endsWord ? "." : ""}
-      </span>
-      <span className="pen-badge" aria-label={`by ${handle}`}>
-        {handle.slice(0, 1).toLocaleUpperCase("en-US")}
-      </span>
-    </>
+    <div className="row-entry-tools">
+      <input type="hidden" name={`blank-${rowIndex}`} value="0" data-testid={`skip-input-${rowIndex}`} />
+      <button
+        type="button"
+        className="button quiet skip-cell-button"
+        data-testid={`skip-cell-${rowIndex}`}
+        onClick={(event) => {
+          const row = event.currentTarget.closest<HTMLElement>(".hint-row");
+          const input = row?.querySelector<HTMLInputElement>(`.clue-letter-input[data-row-index="${rowIndex}"]`);
+          if (!input) return;
+          const skipped = row?.dataset.blankMode === "true";
+          setRowBlankMode(input, !skipped);
+          if (!skipped) focusNextIncompleteLetter(input);
+          else input.focus({ preventScroll: true });
+        }}
+      >
+        Add Blank
+      </button>
+      <label className="end-word-check">
+        <input
+          type="checkbox"
+          name={`end-${rowIndex}`}
+          data-testid={`word-end-${rowIndex}`}
+          onChange={(event) => setEndWordMarker(event.currentTarget)}
+        />
+        <span>End word</span>
+      </label>
+    </div>
+  );
+}
+
+function ClueCellText({ entry, displayAsBlank }: { entry: ClueEntry; displayAsBlank: boolean }): React.ReactElement {
+  if (displayAsBlank) {
+    return <span className="clue-blank" aria-label={`Blank by ${entry.handle}`} />;
+  }
+  return (
+    <span className="clue-letter" aria-label={`${entry.letter}${entry.endsWord ? " word end" : ""} by ${entry.handle}`}>
+      {entry.letter}
+      {entry.endsWord ? <span className="cell-period" aria-hidden="true">.</span> : null}
+    </span>
   );
 }
 
@@ -1495,11 +1552,8 @@ function PlayerLegend({ game }: { game: Game }): React.ReactElement {
       {game.players.map((player) => {
         const pen = penForHandle(game, player.handle);
         return (
-          <span key={player.handle} className={`legend-item pen-${pen.index}`} style={penStyleVars(pen)}>
-            <span className="legend-sample">
-              <span className="clue-letter">A</span>
-              <span className="pen-badge">{player.displayName.slice(0, 1).toLocaleUpperCase("en-US")}</span>
-            </span>
+          <span key={player.handle} className="legend-item" style={penStyleVars(pen)}>
+            <span className={`legend-sample pen-${pen.index}`} aria-hidden="true" />
             <span>{player.displayName}</span>
           </span>
         );
@@ -1546,11 +1600,10 @@ function handleRootKeyDown(event: React.KeyboardEvent<HTMLElement>): void {
   if (!(target instanceof HTMLElement)) return;
   if (event.key === "Enter" && target instanceof HTMLInputElement && target.form) {
     if (target.form.classList.contains("letter-form")) {
-      const inputs = Array.from(target.form.querySelectorAll<HTMLInputElement>('input[name^="letter-"]'));
-      const nextEmpty = inputs.find((input) => input !== target && !input.value.trim());
-      if (nextEmpty) {
+      const nextIncomplete = nextIncompleteLetterInput(target);
+      if (nextIncomplete) {
         event.preventDefault();
-        nextEmpty.focus();
+        nextIncomplete.focus({ preventScroll: true });
         return;
       }
     }
@@ -1564,6 +1617,61 @@ function handleRootKeyDown(event: React.KeyboardEvent<HTMLElement>): void {
   event.preventDefault();
   if (button.type === "submit" && button.form) button.form.requestSubmit(button);
   else button.click();
+}
+
+function setEndWordMarker(checkbox: HTMLInputElement): void {
+  const row = checkbox.closest<HTMLElement>(".hint-row");
+  const editors = row ? Array.from(row.querySelectorAll<HTMLElement>(".cell-editor")) : [];
+  const editor = editors.at(-1);
+  if (!editor) return;
+  editor.dataset.endWord = checkbox.checked ? "true" : "false";
+}
+
+function setRowBlankMode(input: HTMLInputElement, skipped: boolean): void {
+  const row = input.closest<HTMLElement>(".hint-row");
+  const rowIndex = input.dataset.rowIndex ?? "";
+  const skipInput = row?.querySelector<HTMLInputElement>(`[data-testid="skip-input-${rowIndex}"]`);
+  const endWord = row?.querySelector<HTMLInputElement>('input[name^="end-"]');
+  const skipButton = row?.querySelector<HTMLButtonElement>(".skip-cell-button");
+  const inputs = row ? Array.from(row.querySelectorAll<HTMLInputElement>(`.clue-letter-input[data-row-index="${rowIndex}"]`)) : [];
+  if (skipInput) skipInput.value = skipped ? "1" : "0";
+  if (row) row.dataset.blankMode = skipped ? "true" : "false";
+  for (const rowInput of inputs) {
+    const slot = rowInput.closest<HTMLElement>(".slot");
+    if (slot) slot.dataset.skipped = skipped ? "true" : "false";
+    if (skipped) rowInput.value = "";
+    rowInput.readOnly = skipped;
+    rowInput.required = !skipped;
+  }
+  if (endWord && skipped) {
+    endWord.checked = false;
+    endWord.disabled = skipped;
+    setEndWordMarker(endWord);
+  } else if (endWord) {
+    endWord.disabled = false;
+  }
+  if (skipButton) skipButton.textContent = skipped ? "Use Letters" : "Add Blank";
+}
+
+function focusNextIncompleteLetter(input: HTMLInputElement): void {
+  const next = nextIncompleteLetterInput(input);
+  if (next) {
+    next.focus({ preventScroll: true });
+    return;
+  }
+  input.form?.querySelector<HTMLButtonElement>('[data-testid="submit-letters"]')?.focus({ preventScroll: true });
+}
+
+function nextIncompleteLetterInput(current: HTMLInputElement): HTMLInputElement | undefined {
+  const form = current.form;
+  if (!form) return undefined;
+  const inputs = Array.from(form.querySelectorAll<HTMLInputElement>('input[name^="letter-"]'));
+  const afterCurrent = inputs.slice(inputs.indexOf(current) + 1);
+  const beforeCurrent = inputs.slice(0, inputs.indexOf(current));
+  return [...afterCurrent, ...beforeCurrent].find((input) => {
+    if (input === current) return false;
+    return !input.disabled && !input.readOnly && !input.value.trim();
+  });
 }
 
 function useAutoFocus(): void {
@@ -1651,7 +1759,7 @@ function titleCase(value: string): string {
 }
 
 function recapLine(depth: number): string {
-  if (depth === 1) return "A silk purse out of a sow's ear!";
+  if (depth === 1) return "Solved on the first reveal.";
   if (depth <= 3) return "Solved from a few letters.";
   return "Solved just in time.";
 }
@@ -1664,16 +1772,12 @@ function penForHandle(game: Game, handle: string): PenStyle {
   const normalizedHandle = normalizeHandle(handle);
   const orderedPlayers = [...game.players].sort((a, b) => a.seatNumber - b.seatNumber);
   const playerIndex = orderedPlayers.findIndex((player) => player.normalizedHandle === normalizedHandle);
-  const index = playerIndex >= 0 ? playerIndex : hashString(normalizedHandle) % PEN_COLORS.length;
-  const penIndex = index % PEN_COLORS.length;
-  return {
-    index: penIndex,
-    color: PEN_COLORS[penIndex] ?? PEN_COLORS[0],
-  };
+  const index = playerIndex >= 0 ? playerIndex : hashString(normalizedHandle);
+  return { index: index % 8 };
 }
 
 function penStyleVars(pen: PenStyle): React.CSSProperties {
-  return { "--pen-color": pen.color } as React.CSSProperties;
+  return { "--pen-index": pen.index } as React.CSSProperties;
 }
 
 function hashString(value: string): number {
@@ -1744,7 +1848,7 @@ function isFocusable(element: HTMLElement): boolean {
 
 function seasonSummary(game: Game): string {
   const points = game.ribbons.map((pointValue, index) => `Round ${index + 1}: ${pointValue}`).join(", ");
-  return `Sow's Ear Final Score ${finalScore(game)} / 100\nBest five rounds: ${topFive(game.ribbons).join(", ") || "none"}\n${points || "No rounds yet."}`;
+  return `Final Score ${finalScore(game)} / 100\nBest five rounds: ${topFive(game.ribbons).join(", ") || "none"}\n${points || "No rounds yet."}`;
 }
 
 export function startApp(): void {

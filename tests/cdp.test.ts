@@ -579,13 +579,9 @@ describe("Chromium CDP app flow", () => {
     await page.waitFor("document.readyState === 'complete'");
     await page.waitFor(`document.querySelector('[data-testid="room-input"]')`);
     const navigationCount = await page.eval<number>(`performance.getEntriesByType('navigation').length`);
-    await page.waitFor(`
-      document.querySelector('.brand-pig')?.complete &&
-      document.querySelector('.brand-pig')?.naturalWidth > 0 &&
-      document.querySelector('.brand-title')?.complete &&
-      document.querySelector('.brand-title')?.naturalWidth > 0
-    `);
-    expect(await page.eval<number>(`document.querySelectorAll('.brand-title').length`)).toBe(1);
+    await page.waitFor(`document.querySelector('.plain-lockup')`);
+    expect(await page.eval<number>(`document.querySelectorAll('.brand-title, .brand-pig, .handle-mascot').length`)).toBe(0);
+    expect(await page.eval<boolean>(`document.querySelector('.plain-lockup')?.innerText.includes("Word Game")`)).toBe(true);
     await page.click("help-button");
     await page.waitFor(`document.querySelector('[data-testid="help-dialog"]')?.open === true`);
     expect(await page.eval<boolean>(`document.body.innerText.includes('How to Play') && document.body.innerText.includes('Scoring')`)).toBe(true);
@@ -609,7 +605,7 @@ describe("Chromium CDP app flow", () => {
     expect(await page.eval<string>(`document.activeElement?.dataset?.testid ?? ''`)).toBe("create-season");
 
     expect(await page.eval<number>(`performance.getEntriesByType('navigation').length`)).toBe(navigationCount);
-    expect(await page.eval<boolean>(`document.body.innerText.includes('ALICE')`)).toBe(true);
+    expect(await page.eval<boolean>(`document.body.innerText.includes('Alice')`)).toBe(true);
     expect(await page.eval<boolean>(`new URL(location.href).searchParams.get('room') === ${JSON.stringify(room)}`)).toBe(true);
 
     await page.click("leave-room");
@@ -618,7 +614,7 @@ describe("Chromium CDP app flow", () => {
     await page.click(`remembered-room-${room}`);
     await page.waitFor(`document.querySelector('[data-testid="create-season"]')`);
     expect(await page.eval<boolean>(`new URL(location.href).searchParams.get('room') === ${JSON.stringify(room)}`)).toBe(true);
-    expect(await page.eval<boolean>(`document.body.innerText.includes('ALICE')`)).toBe(true);
+    expect(await page.eval<boolean>(`document.body.innerText.includes('Alice')`)).toBe(true);
   }, 20000);
 
   test("entry screen can open and copy a shareable Room before handle claim", async () => {
@@ -868,7 +864,7 @@ describe("Chromium CDP app flow", () => {
       await bob.eval<boolean>(`
         (() => {
           const inputs = Array.from(document.querySelectorAll('.clue-letter-input'));
-          const button = document.querySelector('.letter-form button');
+          const button = document.querySelector('[data-testid="submit-letters"]');
           if (!inputs.length || !(button instanceof HTMLElement)) return false;
           const inputBottom = Math.max(...inputs.map((input) => input.getBoundingClientRect().bottom));
           return button.getBoundingClientRect().top >= inputBottom + 8;
@@ -882,7 +878,7 @@ describe("Chromium CDP app flow", () => {
       await bob.eval<string[]>(
         `Array.from(document.querySelectorAll('.clue-letter-input')).map((input) => input.getAttribute('name') ?? '')`,
       ),
-    ).toEqual(["letter-0", "letter-1"]);
+    ).toEqual(["letter-0-1", "letter-1-1"]);
     expect(await bob.eval<boolean>(`/clue word|intended|whole word/i.test(document.body.innerText)`)).toBe(false);
     await fillAndSubmitLetters(bob, { 0: "h", 1: "s" });
     await alice.waitFor(`document.querySelector('[data-testid="planting-status-0"]')?.dataset.state === 'planted'`);
@@ -1124,31 +1120,38 @@ describe("Chromium CDP app flow", () => {
 
     await bob.waitFor(`document.querySelector('[data-testid="letter-input-0"]')`);
     expect(await bob.eval<string>(`document.activeElement?.dataset?.testid ?? ''`)).toBe("letter-input-0");
-    await bob.keyboardType("letter-input-0", "h");
-    await bob.pressKey(".", "Period");
+    await bob.click("word-end-0");
     expect(await bob.eval<boolean>(`document.querySelector('[data-testid="word-end-0"]').checked`)).toBe(true);
-    await bob.pressEnter();
+    await bob.keyboardType("letter-input-0", "h");
     expect(await bob.eval<string>(`document.activeElement?.dataset?.testid ?? ''`)).toBe("letter-input-1");
     await bob.keyboardType("letter-input-1", "s");
+    expect(await bob.eval<string>(`document.activeElement?.dataset?.testid ?? ''`)).toBe("submit-letters");
     await bob.pressEnter();
     await bob.waitFor(`document.querySelectorAll('[data-testid^="letter-input-"]').length === 0`);
 
     await cora.waitFor(`document.querySelector('[data-testid="letter-input-2"]')`);
     expect(await cora.eval<string>(`document.activeElement?.dataset?.testid ?? ''`)).toBe("letter-input-2");
     await cora.keyboardType("letter-input-2", "c");
-    await cora.pressEnter();
     expect(await cora.eval<string>(`document.activeElement?.dataset?.testid ?? ''`)).toBe("letter-input-3");
     await cora.keyboardType("letter-input-3", "w");
+    expect(await cora.eval<string>(`document.activeElement?.dataset?.testid ?? ''`)).toBe("submit-letters");
     await cora.pressEnter();
     await cora.waitFor(`document.querySelectorAll('[data-testid^="letter-input-"]').length === 0`);
 
     await alice.waitFor(`document.querySelector('[data-testid="guess-input"]')`);
-    expect(await alice.eval<boolean>(`document.querySelector('[data-testid="clue-cell-0-1"]').innerText.includes('H.')`)).toBe(true);
     expect(
       await alice.eval<boolean>(`
         (() => {
-          const widths = Array.from(document.querySelectorAll('[data-testid^="clue-cell-0-"]')).map((cell) => Math.round(cell.getBoundingClientRect().width));
-          return widths.length === 5 && new Set(widths).size === 1;
+          const cell = document.querySelector('[data-testid="clue-cell-0-1"]');
+          return cell?.querySelector('.clue-letter')?.textContent.replace(/\\s+/g, '') === 'H.';
+        })()
+      `),
+    ).toBe(true);
+    expect(
+      await alice.eval<boolean>(`
+        (() => {
+          const widths = Array.from(document.querySelectorAll('.slot')).map((cell) => Math.round(cell.getBoundingClientRect().width));
+          return widths.length >= 4 && new Set(widths).size === 1;
         })()
       `),
     ).toBe(true);
@@ -1165,16 +1168,50 @@ describe("Chromium CDP app flow", () => {
     expect(await alice.eval<boolean>(`document.body.innerText.includes('Points') && document.body.innerText.includes('20')`)).toBe(true);
   }, 20000);
 
+  test("blank creates a trailing blank and the next turn edits that blank plus a new cell", async () => {
+    const room = `cdp-skip-${Date.now().toString(36)}`;
+    const { alice, bob, cora } = await setupThreePlayers(room);
+
+    await alice.waitFor(`document.querySelectorAll('[data-testid="field-option"]').length === 2`);
+    await alice.click("field-option");
+    await bob.waitFor(`document.querySelector('[data-testid="seed-input"]')`);
+    await bob.type("seed-input", "Bale");
+    await bob.click("plant-seed");
+
+    await bob.waitFor(`document.querySelector('[data-testid="letter-input-0"]')`);
+    await bob.click("skip-cell-0");
+    expect(await bob.eval<string>(`document.querySelector('[data-testid="skip-input-0"]').value`)).toBe("1");
+    expect(await bob.eval<string>(`document.activeElement?.dataset?.testid ?? ''`)).toBe("letter-input-1");
+    await bob.keyboardType("letter-input-1", "s");
+    await bob.pressEnter();
+
+    await cora.waitFor(`document.querySelector('[data-testid="letter-input-2"]')`);
+    await fillAndSubmitLetters(cora, { 2: "c", 3: "w" });
+
+    await alice.waitFor(`document.querySelector('[data-testid="guess-input"]')`);
+    expect(await alice.eval<boolean>(`document.querySelector('[data-testid="clue-cell-0-1"]').classList.contains('skipped')`)).toBe(true);
+    expect(await alice.eval<string>(`document.querySelector('[data-testid="clue-cell-0-1"]').innerText.trim()`)).toBe("");
+
+    await alice.click("one-more-letter");
+    const rowZeroCluer = await findPageWith(
+      [bob, cora],
+      `document.querySelector('[data-testid="letter-input-0"]') && document.querySelectorAll('[data-testid^="clue-cell-0-"]').length === 2`,
+    );
+    expect(await rowZeroCluer.eval<boolean>(`document.querySelector('[data-testid="clue-cell-0-1"] input[data-testid="letter-input-0"]') !== null`)).toBe(true);
+    expect(await rowZeroCluer.eval<boolean>(`document.querySelector('[data-testid="clue-cell-0-2"] input[data-testid="letter-input-0"]') !== null`)).toBe(true);
+    expect(await rowZeroCluer.eval<number>(`document.querySelectorAll('[data-testid="letter-input-0"]').length`)).toBe(2);
+  }, 20000);
+
   test("same room and handle reopen restores each active round phase", async () => {
     const room = `cdp-reopen-${Date.now().toString(36)}`;
     const { alice, bob, cora } = await setupThreePlayers(room);
 
     const aliceAtFieldChoice = await reopenSameHandle(room, "Alice", `document.querySelectorAll('[data-testid="field-option"]').length === 2`);
-    expect(await aliceAtFieldChoice.eval<boolean>(`document.body.innerText.includes('ALICE')`)).toBe(true);
+    expect(await aliceAtFieldChoice.eval<boolean>(`document.body.innerText.includes('Alice')`)).toBe(true);
 
     await alice.click("field-option");
     const bobAtSeed = await reopenSameHandle(room, "Bob", `document.querySelector('[data-testid="seed-input"]')`);
-    expect(await bobAtSeed.eval<boolean>(`document.body.innerText.includes('BOB')`)).toBe(true);
+    expect(await bobAtSeed.eval<boolean>(`document.body.innerText.includes('Bob')`)).toBe(true);
 
     await bob.type("seed-input", "Bale");
     await bob.click("plant-seed");
@@ -1256,7 +1293,7 @@ describe("Chromium CDP app flow", () => {
       "Counted Rounds: 20, 20, 20, 20, 20",
     );
     const summary = await alice.eval<string>(`document.querySelector('[data-testid="summary-text"]').value`);
-    expect(summary).toContain("Sow's Ear Final Score 100 / 100");
+    expect(summary).toContain("Final Score 100 / 100");
     expect(summary).toContain("Best five rounds: 20, 20, 20, 20, 20");
     await alice.click("copy-summary");
     await alice.waitFor(`document.querySelector('[data-testid="error"]')?.innerText.includes('Summary')`);
@@ -1390,7 +1427,7 @@ describe("Chromium CDP app flow", () => {
     await page.waitFor("document.readyState === 'complete'");
     await page.waitFor(`document.querySelector('[data-testid="room-input"]')`);
     expect(await page.eval<boolean>(`document.documentElement.scrollWidth <= window.innerWidth + 1`)).toBe(true);
-    expect(await page.eval<number>(`document.querySelectorAll('.brand-title').length`)).toBe(1);
+    expect(await page.eval<number>(`document.querySelectorAll('.brand-title, .brand-pig, .handle-mascot').length`)).toBe(0);
     expect(await page.eval<number>(`document.querySelectorAll('.topbar-brand').length`)).toBe(0);
   }, 20000);
 });

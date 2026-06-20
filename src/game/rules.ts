@@ -36,7 +36,7 @@ export function finalScoreFromPoints(points: number[]): number {
 
 export function roundsForPlayerCount(playerCount: number): number {
   if (playerCount < 3 || playerCount > 8) {
-    throw new RangeError("Sow's Ear supports 3-8 players.");
+    throw new RangeError("The game supports 3-8 players.");
   }
   return playerCount * (playerCount <= 4 ? 2 : 1);
 }

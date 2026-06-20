@@ -24,7 +24,7 @@ export function orderedSeats(players: PlayerSeat[]): PlayerSeat[] {
 export function rolesForRound(players: PlayerSeat[], roundNumber: number): RolePlan {
   const seats = orderedSeats(players);
   if (seats.length < 3 || seats.length > 8) {
-    throw new RangeError("Sow's Ear supports 3-8 players.");
+    throw new RangeError("The game supports 3-8 players.");
   }
   const farmer = seats[(roundNumber - 1) % seats.length];
   if (!farmer) throw new Error("Could not assign guesser.");

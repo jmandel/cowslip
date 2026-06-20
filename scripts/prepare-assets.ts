@@ -249,6 +249,17 @@ await transparentCrop("sowsear-art.png", `${outDir}/brand-title.png`, {
   padding: { top: 10, right: 16, bottom: 18, left: 16 },
 });
 
+await transparentCrop("sowsear-title-header.png", `${outDir}/brand-title-header.png`, {
+  left: 0,
+  top: 0,
+  width: 1448,
+  height: 1086,
+}, {
+  minAverage: 232,
+  maxSpread: 46,
+  padding: 4,
+});
+
 const source = sharp("sowsear-letters.png").ensureAlpha();
 const { data, info } = await source.raw().toBuffer({ resolveWithObject: true });
 

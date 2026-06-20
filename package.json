@@ -10,10 +10,16 @@
     "typecheck": "bunx tsc --noEmit"
   },
   "dependencies": {
-    "@instantdb/core": "latest"
+    "@instantdb/core": "latest",
+    "lucide-react": "^1.21.0",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "zustand": "^5.0.14"
   },
   "devDependencies": {
     "@types/bun": "latest",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
     "sharp": "latest",
     "typescript": "latest"
   }

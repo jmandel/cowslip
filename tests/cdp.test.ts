@@ -304,7 +304,7 @@ async function setupPlayerCount(room: string, count: number): Promise<{ pages: C
     players.push(page);
   }
 
-  await host.waitFor(`document.body.innerText.includes('${count} ready')`);
+  await host.waitFor(`document.querySelectorAll('[data-testid^="seat-P"]').length === ${count} && document.body.innerText.includes('${count} ready')`);
   await host.click("start-season");
   await host.waitFor(`document.body.innerText.includes('HARVEST 1 OF ${count <= 4 ? count * 2 : count}')`);
   return { pages: players, handles };
@@ -578,6 +578,12 @@ describe("Chromium CDP app flow", () => {
       document.querySelector('.brand-title')?.complete &&
       document.querySelector('.brand-title')?.naturalWidth > 0
     `);
+    expect(await page.eval<number>(`document.querySelectorAll('.brand-title').length`)).toBe(1);
+    await page.click("help-button");
+    await page.waitFor(`document.querySelector('[data-testid="help-dialog"]')?.open === true`);
+    expect(await page.eval<boolean>(`document.body.innerText.includes('How to Play') && document.body.innerText.includes('Scoring')`)).toBe(true);
+    await page.click("close-help");
+    await page.waitFor(`document.querySelector('[data-testid="help-dialog"]')?.open === false`);
     expect(await page.eval<string>(`document.activeElement?.dataset?.testid ?? ''`)).toBe("room-input");
     expect(await page.eval<boolean>(`getComputedStyle(document.body).backgroundImage.includes('sowsear-art')`)).toBe(false);
     expect((await page.text()).toLowerCase()).not.toContain("refresh");
@@ -598,20 +604,29 @@ describe("Chromium CDP app flow", () => {
     expect(await page.eval<number>(`performance.getEntriesByType('navigation').length`)).toBe(navigationCount);
     expect(await page.eval<boolean>(`document.body.innerText.includes('ALICE')`)).toBe(true);
     expect(await page.eval<boolean>(`new URL(location.href).searchParams.get('room') === ${JSON.stringify(room)}`)).toBe(true);
+
+    await page.click("leave-room");
+    await page.waitFor(`document.querySelector('[data-testid="room-input"]') && !new URL(location.href).searchParams.has('room')`);
+    await page.waitFor(`document.querySelector('[data-testid="remembered-room-${room}"]')`);
+    await page.click(`remembered-room-${room}`);
+    await page.waitFor(`document.querySelector('[data-testid="create-season"]')`);
+    expect(await page.eval<boolean>(`new URL(location.href).searchParams.get('room') === ${JSON.stringify(room)}`)).toBe(true);
+    expect(await page.eval<boolean>(`document.body.innerText.includes('ALICE')`)).toBe(true);
   }, 20000);
 
-  test("entry screen can create and copy a shareable Room before handle claim", async () => {
+  test("entry screen can open and copy a shareable Room before handle claim", async () => {
+    const room = `cdp-share-${Date.now().toString(36)}`;
     const page = await newPage(`/?local=1`);
     await page.send("Storage.clearDataForOrigin", { origin: appUrl, storageTypes: "local_storage" });
     await page.send("Page.navigate", { url: `${appUrl}/?local=1` });
     await page.waitFor("document.readyState === 'complete'");
-    await page.waitFor(`document.querySelector('[data-testid="create-room"]')`);
+    await page.waitFor(`document.querySelector('[data-testid="room-input"]')`);
     const navigationCount = await page.eval<number>(`performance.getEntriesByType('navigation').length`);
 
-    await page.click("create-room");
+    await page.keyboardType("room-input", room);
+    await page.click("enter-room");
     await page.waitFor(`document.querySelector('[data-testid="handle-input"]')`);
-    const room = await page.eval<string>(`new URL(location.href).searchParams.get('room') ?? ''`);
-    expect(room).toMatch(/^[a-z]+-[a-z]+-[0-9]{3}$/);
+    expect(await page.eval<string>(`new URL(location.href).searchParams.get('room') ?? ''`)).toBe(room);
     expect(await page.eval<number>(`performance.getEntriesByType('navigation').length`)).toBe(navigationCount);
 
     await page.eval(`
@@ -624,8 +639,13 @@ describe("Chromium CDP app flow", () => {
         }
       });
     `);
+    const cardTopBefore = await page.eval<number>(`document.querySelector('.handle-panel').getBoundingClientRect().top`);
     await page.click("copy-room");
     await page.waitFor(`Boolean(window.__sowsearCreatedRoomLink)`);
+    await page.waitFor(`document.querySelector('[data-testid="copy-room"]')?.dataset.copyStatus === 'copied'`);
+    expect(await page.has("error")).toBe(false);
+    const cardTopAfter = await page.eval<number>(`document.querySelector('.handle-panel').getBoundingClientRect().top`);
+    expect(cardTopAfter).toBe(cardTopBefore);
     const copied = await page.eval<string>(`window.__sowsearCreatedRoomLink`);
     const copiedUrl = new URL(copied);
     expect(copiedUrl.searchParams.get("room")).toBe(room);
@@ -1327,5 +1347,22 @@ describe("Chromium CDP app flow", () => {
     expect(await page.eval<string>(`document.activeElement?.dataset?.testid ?? ''`)).toBe("create-season");
     await page.pressEnter();
     await page.waitFor(`document.body.innerText.toLowerCase().includes('season lobby')`);
+  }, 20000);
+
+  test("mobile entry screen shows one brand title and no shell duplicate", async () => {
+    const page = await newPage(`/?local=1`);
+    await page.send("Storage.clearDataForOrigin", { origin: appUrl, storageTypes: "local_storage" });
+    await page.send("Emulation.setDeviceMetricsOverride", {
+      width: 390,
+      height: 844,
+      deviceScaleFactor: 2,
+      mobile: true,
+    });
+    await page.send("Page.navigate", { url: `${appUrl}/?local=1` });
+    await page.waitFor("document.readyState === 'complete'");
+    await page.waitFor(`document.querySelector('[data-testid="room-input"]')`);
+    expect(await page.eval<boolean>(`document.documentElement.scrollWidth <= window.innerWidth + 1`)).toBe(true);
+    expect(await page.eval<number>(`document.querySelectorAll('.brand-title').length`)).toBe(1);
+    expect(await page.eval<number>(`document.querySelectorAll('.topbar-brand').length`)).toBe(0);
   }, 20000);
 });

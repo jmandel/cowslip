@@ -1242,6 +1242,13 @@ describe("Chromium CDP app flow", () => {
     expect(await alice.eval<boolean>(`document.body.innerText.includes('100 / 100')`)).toBe(true);
     expect(await alice.has("review-panel")).toBe(true);
     expect(await alice.has("copy-summary")).toBe(true);
+    await alice.send("Emulation.setDeviceMetricsOverride", {
+      width: 390,
+      height: 844,
+      deviceScaleFactor: 2,
+      mobile: true,
+    });
+    expect(await alice.eval<boolean>(`document.documentElement.scrollWidth <= window.innerWidth + 1`)).toBe(true);
     expect(await alice.eval<string>(`document.querySelector('[data-testid="all-ribbons"]').innerText`)).toBe(
       "Every Round: 10, 20, 20, 20, 20, 20",
     );
@@ -1260,6 +1267,13 @@ describe("Chromium CDP app flow", () => {
     `);
     const reopened = await newPage(`/?room=${room}&handle=Alice&local=1&review=${encodeURIComponent(gameId)}`);
     await reopened.waitFor(`document.querySelector('[data-testid="review-panel"]')`);
+    await reopened.send("Emulation.setDeviceMetricsOverride", {
+      width: 390,
+      height: 844,
+      deviceScaleFactor: 2,
+      mobile: true,
+    });
+    expect(await reopened.eval<boolean>(`document.documentElement.scrollWidth <= window.innerWidth + 1`)).toBe(true);
     expect(await reopened.eval<boolean>(`document.body.innerText.includes('Round 6')`)).toBe(true);
     expect(await reopened.eval<string>(`document.querySelector('[data-testid="review-final-score"]').innerText`)).toBe(
       "Final score 100 / 100",

@@ -297,29 +297,20 @@ await transparentCrop("sowsear-title-header.png", `${outDir}/brand-title-header.
   padding: 4,
 });
 
-const cowslipBloom = await distanceAlphaCrop("cowslip-art.png", {
-  left: 220,
-  top: 34,
-  width: 377,
-  height: 360,
-}, 820);
-await sharp(cowslipBloom)
+const cowslipMetadata = await sharp("cowslip-art.png").metadata();
+const cowslipFlower = await distanceAlphaCrop("cowslip-art.png", {
+  left: 0,
+  top: 0,
+  width: cowslipMetadata.width ?? 1254,
+  height: cowslipMetadata.height ?? 1254,
+}, 980);
+await sharp(cowslipFlower)
   .webp({ quality: 86, alphaQuality: 90, effort: 6 })
-  .toFile(`${outDir}/cowslip-bloom.webp`);
-await sharp(cowslipBloom)
+  .toFile(`${outDir}/cowslip-flower.webp`);
+await sharp(cowslipFlower)
   .resize({ width: 96, height: 96, fit: "contain", background: { r: 255, g: 255, b: 255, alpha: 0 } })
   .png({ compressionLevel: 9, effort: 10 })
   .toFile(`${outDir}/cowslip-icon.png`);
-
-const cowslipRosette = await distanceAlphaCrop("cowslip-art.png", {
-  left: 0,
-  top: 758,
-  width: 365,
-  height: 305,
-}, 760);
-await sharp(cowslipRosette)
-  .webp({ quality: 86, alphaQuality: 90, effort: 6 })
-  .toFile(`${outDir}/cowslip-rosette.webp`);
 
 const source = sharp("sowsear-letters.png").ensureAlpha();
 const { data, info } = await source.raw().toBuffer({ resolveWithObject: true });

@@ -1,6 +1,6 @@
 import React, { useEffect, useLayoutEffect, useRef } from "react";
 import { createRoot } from "react-dom/client";
-import { Check, CircleHelp, Copy, Home, UserPen, X } from "lucide-react";
+import { Check, CircleHelp, Copy, LogOut, UserPen, X } from "lucide-react";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { STARTER_CATEGORIES, categoryLabel } from "./content/categories";
@@ -523,9 +523,7 @@ function CowslipApp(): React.ReactElement {
   useAutoFocus();
 
   let body: React.ReactNode;
-  let hideHeaderBrand = false;
   if (!context.roomSlug) {
-    hideHeaderBrand = true;
     body = <RoomEntry />;
   } else if (!context.handle) {
     body = <HandleClaim />;
@@ -549,7 +547,7 @@ function CowslipApp(): React.ReactElement {
 
   return (
     <main className="app-shell" onKeyDown={handleRootKeyDown}>
-      <Shell hideHeaderBrand={hideHeaderBrand} />
+      <Shell />
       {error ? (
         <div className="toast" role="alert" data-testid="error">
           {error}
@@ -561,7 +559,7 @@ function CowslipApp(): React.ReactElement {
   );
 }
 
-function Shell({ hideHeaderBrand }: { hideHeaderBrand?: boolean }): React.ReactElement {
+function Shell(): React.ReactElement {
   const context = useGameStore((state) => state.context);
   const openHelp = useGameStore((state) => state.openHelp);
   const copyRoom = useGameStore((state) => state.copyRoom);
@@ -570,16 +568,12 @@ function Shell({ hideHeaderBrand }: { hideHeaderBrand?: boolean }): React.ReactE
   const copyStatus = useGameStore((state) => state.copyStatus);
   const hasRoomContext = Boolean(context.roomSlug || context.handle);
   return (
-    <header className={`topbar ${hideHeaderBrand ? "topbar-minimal" : ""}`}>
-      {hideHeaderBrand ? (
-        <div />
-      ) : (
-        <div className="topbar-brand">
-          <a className="wordmark" href="./">
-            Cowslip
-          </a>
-        </div>
-      )}
+    <header className="topbar">
+      <div className="topbar-brand">
+        <a className="wordmark" href="./">
+          Cowslip
+        </a>
+      </div>
       <div className="topbar-global-actions">
         <button type="button" className="help-button" aria-label="How to play" title="How to play" onClick={openHelp} data-testid="help-button">
           <CircleHelp aria-hidden="true" size={24} strokeWidth={2.25} />
@@ -595,8 +589,9 @@ function Shell({ hideHeaderBrand }: { hideHeaderBrand?: boolean }): React.ReactE
             ) : null}
             <div className="topbar-icon-actions">
               {context.roomSlug ? (
-                <button type="button" className="button icon-button topbar-icon-button" aria-label="Room switcher" title="Room switcher" onClick={leaveRoom} data-testid="leave-room">
-                  <Home aria-hidden="true" size={19} strokeWidth={2.5} />
+                <button type="button" className="button topbar-leave-button" aria-label="Leave room" title="Leave room" onClick={leaveRoom} data-testid="leave-room">
+                  <LogOut aria-hidden="true" size={18} strokeWidth={2.5} />
+                  <span>Leave</span>
                 </button>
               ) : null}
               {context.roomSlug ? (
@@ -717,8 +712,7 @@ function RoomEntry(): React.ReactElement {
           <p>A cooperative word game where every letter counts.</p>
         </div>
         <div className="landing-art" aria-hidden="true">
-          <img src="./assets/cowslip-bloom.webp" alt="" className="landing-bloom" />
-          <img src="./assets/cowslip-rosette.webp" alt="" className="landing-rosette" />
+          <img src="./assets/cowslip-flower.webp" alt="" className="landing-flower" />
         </div>
       </div>
       <div className="room-entry-stack">

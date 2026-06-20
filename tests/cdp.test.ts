@@ -582,7 +582,7 @@ describe("Chromium CDP app flow", () => {
     await page.waitFor(`document.querySelector('.plain-lockup')`);
     expect(await page.eval<number>(`document.querySelectorAll('.brand-title, .brand-pig, .handle-mascot').length`)).toBe(0);
     expect(await page.eval<boolean>(`document.querySelector('.plain-lockup')?.innerText.includes("Cowslip")`)).toBe(true);
-    expect(await page.eval<number>(`document.querySelectorAll('.landing-art img').length`)).toBe(2);
+    expect(await page.eval<number>(`document.querySelectorAll('.landing-art img').length`)).toBe(1);
     await page.click("help-button");
     await page.waitFor(`document.querySelector('[data-testid="help-dialog"]')?.open === true`);
     expect(await page.eval<boolean>(`document.body.innerText.includes('How to Play') && document.body.innerText.includes('Scoring')`)).toBe(true);
@@ -609,6 +609,7 @@ describe("Chromium CDP app flow", () => {
     expect(await page.eval<number>(`performance.getEntriesByType('navigation').length`)).toBe(navigationCount);
     expect(await page.eval<boolean>(`document.body.innerText.includes('Alice')`)).toBe(true);
     expect(await page.eval<boolean>(`new URL(location.href).searchParams.get('room') === ${JSON.stringify(room)}`)).toBe(true);
+    expect(await page.eval<string>(`document.querySelector('[data-testid="leave-room"]')?.textContent.trim() ?? ''`)).toBe("Leave");
 
     await page.click("leave-room");
     await page.waitFor(`document.querySelector('[data-testid="room-input"]') && !new URL(location.href).searchParams.has('room')`);
@@ -1449,6 +1450,7 @@ describe("Chromium CDP app flow", () => {
     await page.waitFor(`document.querySelector('[data-testid="room-input"]')`);
     expect(await page.eval<boolean>(`document.documentElement.scrollWidth <= window.innerWidth + 1`)).toBe(true);
     expect(await page.eval<number>(`document.querySelectorAll('.brand-title, .brand-pig, .handle-mascot').length`)).toBe(0);
-    expect(await page.eval<number>(`document.querySelectorAll('.topbar-brand').length`)).toBe(0);
+    expect(await page.eval<number>(`document.querySelectorAll('.topbar-brand').length`)).toBe(1);
+    expect(await page.eval<number>(`document.querySelectorAll('.landing-art img').length`)).toBe(1);
   }, 20000);
 });

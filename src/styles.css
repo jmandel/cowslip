@@ -11,6 +11,9 @@
   --panel-gap: 14px;
   --topbar-control-height: 36px;
   --topbar-chip-label-width: 74px;
+  --accent-orange: #c76312;
+  --accent-green: #49680f;
+  --accent-green-dark: #324c0a;
 }
 
 * {
@@ -36,9 +39,16 @@ button {
 }
 
 :focus-visible {
-  outline: 2px solid #111;
+  outline: 2px solid var(--accent-orange);
   outline-offset: 3px;
   box-shadow: none;
+}
+
+::view-transition-group(*),
+::view-transition-old(*),
+::view-transition-new(*) {
+  animation-duration: 0.25s;
+  animation-timing-function: cubic-bezier(0.19, 1, 0.22, 1);
 }
 
 .sr-only {
@@ -77,10 +87,6 @@ button {
   border-bottom: 1px solid #111;
   padding-bottom: 12px;
   margin-bottom: 18px;
-}
-
-.topbar-minimal {
-  grid-template-columns: minmax(0, 1fr) auto;
 }
 
 .topbar-brand {
@@ -221,6 +227,15 @@ button {
   place-items: center;
 }
 
+.topbar-leave-button {
+  min-height: var(--topbar-control-height);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  white-space: nowrap;
+}
+
 .toast {
   border: 1px solid #111;
   background: #fff;
@@ -267,22 +282,22 @@ h2 {
 }
 
 .hero {
-  min-height: max(560px, calc(100vh - 180px));
+  min-height: max(500px, calc(100vh - 132px));
   display: grid;
-  grid-template-columns: minmax(0, 1.25fr) minmax(300px, 440px);
-  gap: clamp(28px, 6vw, 76px);
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 460px);
+  gap: clamp(32px, 6vw, 80px);
   align-items: center;
 }
 
 .plain-lockup {
   display: grid;
   align-content: center;
-  gap: clamp(16px, 3vw, 28px);
+  gap: clamp(18px, 3vw, 30px);
   position: relative;
 }
 
 .plain-lockup h1 {
-  font-size: clamp(3.4rem, 11vw, 8rem);
+  font-size: clamp(3.2rem, 8vw, 5.8rem);
   line-height: 0.95;
   margin: 0;
 }
@@ -299,7 +314,9 @@ h2 {
 
 .landing-art {
   position: relative;
-  min-height: clamp(260px, 43vw, 440px);
+  min-height: clamp(290px, 36vw, 470px);
+  display: grid;
+  place-items: center;
 }
 
 .landing-art img {
@@ -308,18 +325,9 @@ h2 {
   user-select: none;
 }
 
-.landing-bloom {
-  position: absolute;
-  width: min(78%, 520px);
-  right: 0;
-  top: 0;
-}
-
-.landing-rosette {
-  position: absolute;
-  width: min(54%, 350px);
-  left: 0;
-  bottom: 0;
+.landing-flower {
+  width: min(100%, 470px);
+  filter: drop-shadow(0 16px 22px rgb(17 17 17 / 0.08));
 }
 
 .room-entry-stack,
@@ -379,6 +387,20 @@ textarea {
 .room-entry-card .button.primary,
 .guess-form .button.primary {
   width: 100%;
+}
+
+.room-entry-card .button.primary {
+  background: var(--accent-green);
+  border-color: var(--accent-green);
+}
+
+.room-entry-card .button.primary:hover {
+  background: var(--accent-green-dark);
+  border-color: var(--accent-green-dark);
+}
+
+.room-entry-card input:focus-visible {
+  outline-color: var(--accent-orange);
 }
 
 .card-title {
@@ -891,7 +913,7 @@ textarea {
     min-height: auto;
     grid-template-columns: 1fr;
     align-content: start;
-    gap: 18px;
+    gap: 20px;
   }
 
   .plain-lockup {
@@ -900,16 +922,12 @@ textarea {
   }
 
   .landing-art {
-    min-height: clamp(210px, 70vw, 330px);
+    min-height: auto;
   }
 
-  .landing-bloom {
-    width: min(72%, 290px);
-    right: 0;
-  }
-
-  .landing-rosette {
-    width: min(52%, 220px);
+  .landing-flower {
+    width: min(100%, 360px);
+    justify-self: center;
   }
 
   .paper-panel,

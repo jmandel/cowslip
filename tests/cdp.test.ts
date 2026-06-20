@@ -312,23 +312,50 @@ async function setupPlayerCount(room: string, count: number): Promise<{ pages: C
 
 async function fillCurrentLetters(pages: CdpPage[]): Promise<void> {
   await waitForTotalLetterInputs(pages, 4);
-  for (const page of pages) {
-    const count = await page.eval<number>(`document.querySelectorAll('[data-testid^="letter-input-"]').length`);
-    if (!count) continue;
-    await page.eval(`
-      (() => {
-        const inputs = Array.from(document.querySelectorAll('[data-testid^="letter-input-"]'));
-        for (const input of inputs) {
-          input.value = 's';
-          input.dispatchEvent(new Event('input', { bubbles: true }));
-        }
-        const button = document.querySelector('[data-testid="submit-letters"]');
-        if (!(button instanceof HTMLButtonElement)) throw new Error('Missing submit-letters button');
-        button.click();
-      })()
-    `);
-    await page.waitFor(`document.querySelectorAll('[data-testid^="letter-input-"]').length === 0`);
+  const start = Date.now();
+  while (Date.now() - start < 8000) {
+    let submitted = false;
+    for (const page of pages) {
+      submitted = (await submitVisibleLetters(page)) || submitted;
+    }
+    if (await anyPageMatches(pages, `document.querySelector('[data-testid="guess-input"]') || document.querySelector('[data-testid="one-more-letter"]')`)) {
+      return;
+    }
+    if (!submitted) await Bun.sleep(80);
   }
+  throw new Error(`Timed out submitting current letters; ${await totalLetterInputs(pages)} inputs remain.`);
+}
+
+async function submitVisibleLetters(page: CdpPage): Promise<boolean> {
+  return page.eval<boolean>(`
+    (() => {
+      const inputs = Array.from(document.querySelectorAll('[data-testid^="letter-input-"]'));
+      if (!inputs.length) return false;
+      for (const input of inputs) {
+        input.value = 's';
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+      const button = document.querySelector('[data-testid="submit-letters"]');
+      if (!(button instanceof HTMLButtonElement)) throw new Error('Missing submit-letters button');
+      button.click();
+      return true;
+    })()
+  `);
+}
+
+async function totalLetterInputs(pages: CdpPage[]): Promise<number> {
+  let total = 0;
+  for (const page of pages) {
+    total += await page.eval<number>(`document.querySelectorAll('[data-testid^="letter-input-"]').length`);
+  }
+  return total;
+}
+
+async function anyPageMatches(pages: CdpPage[], expression: string): Promise<boolean> {
+  for (const page of pages) {
+    if (await page.eval<boolean>(`Boolean(${expression})`)) return true;
+  }
+  return false;
 }
 
 async function waitForTotalLetterInputs(pages: CdpPage[], expected: number): Promise<void> {

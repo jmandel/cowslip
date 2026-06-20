@@ -8,7 +8,7 @@ describe("field option planning", () => {
     const labels = new Set(STARTER_FIELDS.map((field) => field.label));
     const difficulties = new Set(STARTER_FIELDS.map((field) => field.difficultyHint));
 
-    expect(STARTER_FIELDS.length).toBeGreaterThanOrEqual(120);
+    expect(STARTER_FIELDS.length).toBeGreaterThanOrEqual(100);
     expect(STARTER_FIELDS.length).toBeLessThanOrEqual(200);
     expect(ids.size).toBe(STARTER_FIELDS.length);
     expect(labels.size).toBe(STARTER_FIELDS.length);

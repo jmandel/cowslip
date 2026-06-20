@@ -103,13 +103,13 @@ Roles rotate by seat each Harvest, so everyone takes turns being Farmer.
 ### A Harvest, step by step
 
 **1 — The Farmer picks the Field.**
-The Farmer is privately shown **two** Field cards and chooses one. The chosen Field becomes **public to everyone, including the Farmer.** This is intentional and not a leak — the Field is the *search space*, not the secret. Knowing "Things Found on a Farm" doesn't reveal BALE; it just makes the sprouting letters interpretable. The Farmer needs the Field visible the whole Harvest. Because the Field is chosen *before* the Seed exists, the Farmer can't steer toward an easy answer — only toward which field they'd rather play in.
+The Farmer is privately shown **two** Field cards and chooses one. The chosen Field becomes **public to everyone, including the Farmer.** This is intentional and not a leak — the Field is the *search space*, not the secret. Knowing "Farm Animal" doesn't reveal GOAT; it just makes the sprouting letters interpretable. The Farmer needs the Field visible the whole Harvest. Because the Field is chosen *before* the Seed exists, the Farmer can't steer toward an easy answer — only toward which field they'd rather play in.
 
 **2 — The Sower plants the Seed.**
-The Sower invents **any** word or short phrase that fits the Field — not from a list. Example: Field *Things Found on a Farm* → Seed **BALE (of hay)**. Every Hand sees the Seed; the Farmer does not. Once locked, the Seed cannot change.
+The Sower invents **any** word or short phrase that fits the Field — not from a list. Example: Field *Farm Animal* → Seed **GOAT**. Every Hand sees the Seed; the Farmer does not. Once locked, the Seed cannot change.
 
 **3 — The Hands think of clues.**
-Each Hand privately settles on a clue word related to the Seed (for BALE: HAY, STACK, COW, STRAW…). They never write or say the whole word. Later Hands are *supposed* to infer what an earlier Hand was spelling — that inference, and its failures, are the heart of the game. Hands must not coordinate.
+Each Hand privately settles on a clue word related to the Seed (for GOAT: HORN, MILK, BEARD, BLEAT…). They never write or say the whole word. Later Hands are *supposed* to infer what an earlier Hand was spelling — that inference, and its failures, are the heart of the game. Hands must not coordinate.
 
 **4 — Plant the first letter.**
 Every Hand plants the first letter of their clue on their Row. Plantings are simultaneous and hidden until everyone has planted, then they all **sprout** at once. (No Hand may choose a letter after seeing someone else's.)
@@ -212,14 +212,16 @@ Store both raw and normalized forms of Seed and guess for audit.
 
 ## 7. Content — Fields (the product)
 
-As a standalone game, **content is the product.** Fields are cheap to author and carry near-zero IP risk as long as we write our own (broad noun categories like "Things Found on a Farm" are not ownable; do **not** clone any specific published deck).
+As a standalone game, **content is the product.** Fields are cheap to author and carry near-zero IP risk as long as we write our own (short noun-class categories like "Planet" or "Condiment" are not ownable; do **not** clone any specific published deck).
+
+**A Field names a *kind of thing*; the Sower invents a specific member each Harvest.** The Field is a noun class, not a property prompt: *Planet* → MARS, *Condiment* → KETCHUP, *Sci-Fi Movie* → ALIEN. Keep labels **short and concrete** — a tight class makes the sprouting letters interpretable for the Farmer (the Field is the *search space*, per §5). Avoid open property prompts ("Things That Are Round," "Things You Can Peel"): they describe a quality rather than a class, barely constrain the answer space, and flatten the comedy.
 
 **A Field carries no answers.** The Seed is invented each Harvest. We only author prompts.
 
 ```ts
 type Field = {
   id: string;          // stable slug
-  label: string;       // "Things Found on a Farm"
+  label: string;       // "Sci-Fi Movie"
   locale: string;      // "en-US"
   packId: string;
   source: "original" | "custom";
@@ -228,9 +230,13 @@ type Field = {
 };
 ```
 
-**Starter pack themes (author ~120–200 Fields for launch):** everyday objects, food & drink, animals, places, jobs, sports & games, movies/TV/books (titles only), music, science & nature, household, clothing, transportation, holidays, "things that are round," "things you find in a kitchen," "famous duos," "one-word answers only," "two words," etc. Mix breadths so the Sower's invention space varies.
+**Starter pack (100 Fields, shipped in `src/content/fields.ts`):** a single original pack split across the three difficulty tiers, mixing domains so the Sower's invention space varies:
 
-**Authoring guidelines:** broad enough that many Seeds fit; not so broad the Field is meaningless; avoid prompts that invite unsafe or exclusionary answers; tag a rough difficulty. Keep packs versioned.
+- **easy (34)** — universal classes with dozens of obvious members: Fruit, Vegetable, Farm Animal, Color, Pizza Topping, Dessert, Condiment, Sport, Board Game, Musical Instrument, Planet, Holiday, Tool, Vehicle, etc.
+- **medium (33)** — specific instances needing some culture/geography: Athlete, Superhero, Sci-Fi Movie, Disney Movie, Video Game, Arcade Game, Country, US State, River, Dinosaur, Gemstone, Chemical Element, Cocktail, Cheese, Art Supply, etc.
+- **spicy (33)** — niche, abstract, or proper-noun-heavy classes that are harder to clue fairly: Comic Book Villain, Greek God, Chess Piece, Phobia, Emotion, Cloud Type, Font, Shakespeare Play, Famous Painting, Philosopher, Space Mission, Fairy Tale, Zodiac Sign, Cryptid, etc.
+
+**Authoring guidelines:** prefer a short singular noun class; populated enough that many Seeds fit, but tight enough to constrain the search space (a class, not a vague quality); avoid prompts that invite unsafe or exclusionary answers; tag a rough difficulty. Keep packs versioned.
 
 **Deferred:** public user-generated packs (needs content-safety review), licensed packs, localization beyond launch language.
 

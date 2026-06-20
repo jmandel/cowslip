@@ -886,14 +886,15 @@ describe("Chromium CDP app flow", () => {
     ).toEqual(["letter-0-1", "letter-1-1"]);
     expect(await bob.eval<boolean>(`/clue word|intended|whole word/i.test(document.body.innerText)`)).toBe(false);
     await fillAndSubmitLetters(bob, { 0: "h", 1: "s" });
-    await alice.waitFor(`document.querySelector('[data-testid="planting-status-0"]')?.dataset.state === 'planted'`);
-    const plantingStatus = await alice.eval<string>(`document.querySelector('[data-testid="planting-status"]').innerText`);
-    expect(plantingStatus).toContain("Row 1");
-    expect(plantingStatus).toContain("Bob");
-    expect(plantingStatus).toContain("Submitted");
-    expect(plantingStatus).toContain("Cora");
-    expect(plantingStatus).toContain("Waiting");
-    expect(await alice.eval<boolean>(`document.querySelector('[data-testid="planting-status"]').innerText.includes('H')`)).toBe(false);
+    await alice.waitFor(`document.querySelector('[data-testid="row-state-0"]')?.dataset.state === 'submitted'`);
+    expect(await alice.has("planting-status")).toBe(false);
+    const rowStates = await alice.eval<string>(`document.querySelector('[data-testid="rows"]').innerText`);
+    expect(rowStates).toContain("Bob submitted");
+    expect(rowStates).toContain("Cora waiting");
+    expect(await alice.eval<boolean>(`document.querySelector('[data-testid="rows"]').innerText.includes('H')`)).toBe(false);
+    expect(await bob.eval<string>(`document.querySelector('[data-testid="row-state-0"]').innerText`)).toBe("You submitted");
+    expect(await bob.eval<boolean>(`document.querySelector('[data-testid="rows"]').innerText.includes('H')`)).toBe(true);
+    expect(await bob.eval<boolean>(`document.querySelector('[data-testid="rows"]').innerText.includes('S')`)).toBe(true);
 
     await fillAndSubmitLetters(cora, { 2: "c", 3: "w" });
 
@@ -926,12 +927,13 @@ describe("Chromium CDP app flow", () => {
     await page.eval(`localStorage.setItem(${JSON.stringify(`sowsear:events:${room}`)}, ${JSON.stringify(JSON.stringify(events))})`);
     await page.send("Page.navigate", { url: `${appUrl}/?room=${room}&handle=Alice&local=1` });
     await page.waitFor("document.readyState === 'complete'");
-    await page.waitFor(`document.querySelector('[data-testid="planting-status-2"]')?.dataset.presence === 'offline'`);
+    await page.waitFor(`document.querySelector('[data-testid="row-state-2"]')?.dataset.presence === 'offline'`);
 
     expect(await page.has("guess-input")).toBe(false);
-    expect(await page.eval<string>(`document.querySelector('[data-testid="planting-status-0"]').dataset.state`)).toBe("planted");
-    expect(await page.eval<string>(`document.querySelector('[data-testid="planting-status-2"]').dataset.state`)).toBe("waiting");
-    expect(await page.eval<string>(`document.querySelector('[data-testid="planting-status-2"]').dataset.presence`)).toBe("offline");
+    expect(await page.has("planting-status")).toBe(false);
+    expect(await page.eval<string>(`document.querySelector('[data-testid="row-state-0"]').dataset.state`)).toBe("submitted");
+    expect(await page.eval<string>(`document.querySelector('[data-testid="row-state-2"]').dataset.state`)).toBe("waiting");
+    expect(await page.eval<string>(`document.querySelector('[data-testid="row-state-2"]').dataset.presence`)).toBe("offline");
     expect(
       await page.eval<boolean>(
         `Array.from(document.querySelectorAll('[data-testid^="clue-cell"]')).map((cell) => cell.innerText).join('').includes('H')`,
@@ -1022,7 +1024,7 @@ describe("Chromium CDP app flow", () => {
         .filter((event) => event.type === 'letters.planted' && event.actorHandle === 'Bob').length
     `);
     expect(bobPlantEvents).toBe(1);
-    expect(await bob.eval<boolean>(`document.body.innerText.includes('Waiting for the handoff')`)).toBe(true);
+    expect(await bob.eval<boolean>(`document.body.innerText.includes('Submitted. Waiting for the other cluers.')`)).toBe(true);
   }, 20000);
 
   test("Guesser cannot wait at five cells and pass resolves the round at zero", async () => {

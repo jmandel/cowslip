@@ -438,8 +438,7 @@ textarea {
   min-width: 0;
 }
 
-.seat-list li,
-.planting-status-item {
+.seat-list li {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 8px;
@@ -566,7 +565,7 @@ textarea {
 
 .hint-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(72px, auto);
+  grid-template-columns: minmax(0, 1fr) minmax(118px, auto);
   gap: 8px;
   align-items: center;
 }
@@ -611,6 +610,11 @@ textarea {
 
 .slot.editing {
   box-shadow: inset 0 0 0 2px #111;
+}
+
+.row-state {
+  justify-self: start;
+  font-weight: 700;
 }
 
 .slot.frozen::after {
@@ -743,15 +747,6 @@ textarea {
   min-height: 18px;
   padding: 0;
   accent-color: #111;
-}
-
-.planting-status {
-  display: grid;
-  gap: 8px;
-}
-
-.planting-status-item {
-  grid-template-columns: minmax(54px, auto) minmax(0, 1fr) minmax(112px, auto);
 }
 
 .compare-list {
@@ -890,7 +885,6 @@ textarea {
     grid-column: 1;
   }
 
-  .planting-status-item,
   .seat-list li {
     grid-template-columns: 1fr;
   }

@@ -1083,6 +1083,17 @@ function PlantingPanel({ game, round, role, fieldTitle }: { game: Game; round: R
   const context = useSowsEarStore((state) => state.context);
   const plantLetters = useSowsEarStore((state) => state.plantLetters);
   const heldRows = rowsHeldForClue(round, context.handle);
+  const submittedCurrentDepth = round.entries.some((entry) => entry.depth === round.depth && sameHandle(entry.handle, context.handle));
+  const rows = (
+    <Rows
+      game={game}
+      round={round}
+      revealAll={false}
+      viewerHandle={context.handle}
+      editableRows={heldRows}
+      showPlantingState={true}
+    />
+  );
   return (
     <section className="paper-panel board-panel">
       <p className="eyebrow">Category</p>
@@ -1092,6 +1103,15 @@ function PlantingPanel({ game, round, role, fieldTitle }: { game: Game; round: R
           Answer: <strong>{round.seedRaw}</strong>
         </p>
       )}
+      <p className="subtle">
+        {role === "guesser"
+          ? "The cluers are adding letters."
+          : heldRows.length
+            ? "Plant one letter in each row you hold."
+            : submittedCurrentDepth
+              ? "Submitted. Waiting for the other cluers."
+              : "Waiting for the other cluers."}
+      </p>
       {heldRows.length ? (
         <form
           className="letter-form inline-clue-form"
@@ -1115,50 +1135,15 @@ function PlantingPanel({ game, round, role, fieldTitle }: { game: Game; round: R
             void plantLetters(letters);
           }}
         >
-          <Rows game={game} round={round} revealAll={false} editableRows={heldRows} />
+          {rows}
           <button className="button primary" type="submit" data-testid="submit-letters">
             Submit Clues
           </button>
-          <PlantingStatus round={round} />
         </form>
       ) : (
-        <>
-          <Rows game={game} round={round} revealAll={false} />
-          <PlantingStatus round={round} />
-          <p className="subtle">{role === "guesser" ? "The cluers are adding letters." : "Waiting for the handoff."}</p>
-        </>
+        rows
       )}
     </section>
-  );
-}
-
-function PlantingStatus({ round }: { round: Round }): React.ReactElement | null {
-  const context = useSowsEarStore((state) => state.context);
-  const roomState = useSowsEarStore((state) => state.roomState);
-  const now = useSowsEarStore((state) => state.now);
-  if (round.phase !== "planting") return null;
-  return (
-    <div className="planting-status" data-testid="planting-status" aria-label="Planting status">
-      {round.rows.map((row) => {
-        const entry = round.entries.find((item) => item.rowIndex === row.rowIndex && item.depth === round.depth);
-        const complete = rowIsComplete(round, row.rowIndex);
-        const handle = entry?.handle ?? row.currentHolderHandle;
-        const online = isHandleOnline(handle, context, roomState, now);
-        return (
-          <div
-            key={row.rowIndex}
-            className={`planting-status-item ${entry ? "planted" : "waiting"}`}
-            data-testid={`planting-status-${row.rowIndex}`}
-            data-state={complete ? "complete" : entry ? "planted" : "waiting"}
-            data-presence={online ? "online" : "offline"}
-          >
-            <span>Row {row.rowIndex + 1}</span>
-            <strong>{handle}</strong>
-            <span>{complete ? "Complete" : entry ? "Submitted" : online ? "Waiting" : "Waiting (offline)"}</span>
-          </div>
-        );
-      })}
-    </div>
   );
 }
 
@@ -1402,15 +1387,23 @@ function Rows({
   game,
   round,
   revealAll,
+  viewerHandle = "",
   maxVisibleDepth,
   editableRows = [],
+  showPlantingState = false,
 }: {
   game: Game;
   round: Round;
   revealAll: boolean;
+  viewerHandle?: string;
   maxVisibleDepth?: number;
   editableRows?: Row[];
+  showPlantingState?: boolean;
 }): React.ReactElement {
+  const context = useSowsEarStore((state) => state.context);
+  const roomState = useSowsEarStore((state) => state.roomState);
+  const now = useSowsEarStore((state) => state.now);
+  const viewer = viewerHandle || context.handle;
   const editableRowIndexes = new Set(editableRows.map((row) => row.rowIndex));
   return (
     <div className="rows" data-testid="rows">
@@ -1420,21 +1413,38 @@ function Rows({
         const isComplete = rowIsComplete(round, row.rowIndex);
         const hasCurrentEntry = round.entries.some((entry) => entry.rowIndex === row.rowIndex && entry.depth === round.depth);
         const showPendingCell = !revealAll && !isComplete && !hasCurrentEntry && round.phase === "planting";
+        const rowState = plantingRowState(round, row, viewer, roomState, now);
         const trailingBlankDepths = new Set(
           editable && showPendingCell ? trailingBlankEntriesForRow(round, row.rowIndex).map((entry) => entry.depth) : [],
         );
         const entries = rowEntriesThroughDepth(round, row.rowIndex, limit)
-          .filter((entry) => revealAll || maxVisibleDepth !== undefined || entry.sprouted || entry.depth < round.depth)
+          .filter(
+            (entry) =>
+              revealAll ||
+              maxVisibleDepth !== undefined ||
+              entry.sprouted ||
+              entry.depth < round.depth ||
+              sameHandle(entry.handle, viewer) ||
+              (showPlantingState && round.phase === "planting" && entry.depth === round.depth),
+          )
           .sort((a, b) => a.depth - b.depth);
         const cellCount = entries.length + (showPendingCell ? 1 : 0);
         return (
-          <div className={`hint-row ${revealAll ? "reveal" : ""} ${isComplete ? "complete" : ""}`} key={row.rowIndex}>
+          <div
+            className={`hint-row ${revealAll ? "reveal" : ""} ${isComplete ? "complete" : ""}`}
+            key={row.rowIndex}
+            data-state={rowState.state}
+            data-presence={rowState.presence}
+          >
             <div className="row-main">
               <div className="slots" aria-label={`Row ${row.rowIndex + 1}`} data-cell-count={cellCount}>
                 {entries.map((entry) => {
                   const pen = penForHandle(game, entry.handle);
                   const filledAtDepth = entry.filledAtDepth ?? entry.depth;
-                  const displayAsBlank = entry.skipped || (maxVisibleDepth !== undefined && filledAtDepth > maxVisibleDepth) || (!revealAll && !entry.sprouted);
+                  const displayAsBlank =
+                    entry.skipped ||
+                    (maxVisibleDepth !== undefined && filledAtDepth > maxVisibleDepth) ||
+                    (!revealAll && !entry.sprouted && !sameHandle(entry.handle, viewer));
                   if (showPendingCell && trailingBlankDepths.has(entry.depth)) {
                     return (
                       <span className="slot editing blank-fill" key={entry.depth} data-testid={`clue-cell-${row.rowIndex}-${entry.depth}`}>
@@ -1461,12 +1471,42 @@ function Rows({
               </div>
               {editable ? <RowEntryTools rowIndex={row.rowIndex} /> : null}
             </div>
-            {revealAll ? null : <span className="holder">{row.currentHolderHandle}</span>}
+            {revealAll ? null : (
+              <span
+                className="holder row-state"
+                data-testid={`row-state-${row.rowIndex}`}
+                data-state={rowState.state}
+                data-presence={rowState.presence}
+              >
+                {showPlantingState ? rowState.label : row.currentHolderHandle}
+              </span>
+            )}
           </div>
         );
       })}
     </div>
   );
+}
+
+function plantingRowState(
+  round: Round,
+  row: Row,
+  viewerHandle: string,
+  roomState: RoomState | undefined,
+  now: number,
+): { label: string; state: "complete" | "submitted" | "waiting" | "editable"; presence: "online" | "offline" } {
+  const entry = round.entries.find((item) => item.rowIndex === row.rowIndex && item.depth === round.depth);
+  const complete = rowIsComplete(round, row.rowIndex);
+  const handle = entry?.handle ?? row.currentHolderHandle;
+  const online = isHandleOnline(handle, { roomSlug: "", handle: viewerHandle }, roomState, now);
+
+  if (complete) return { label: "Complete", state: "complete", presence: online ? "online" : "offline" };
+  if (!entry) {
+    if (sameHandle(row.currentHolderHandle, viewerHandle)) return { label: "You", state: "editable", presence: "online" };
+    return { label: `${row.currentHolderHandle} ${online ? "waiting" : "waiting (offline)"}`, state: "waiting", presence: online ? "online" : "offline" };
+  }
+  if (sameHandle(entry.handle, viewerHandle)) return { label: "You submitted", state: "submitted", presence: "online" };
+  return { label: `${entry.handle} submitted`, state: "submitted", presence: online ? "online" : "offline" };
 }
 
 function ClueCellInputControl({ rowIndex, depth }: { rowIndex: number; depth: number }): React.ReactElement {
@@ -1762,6 +1802,10 @@ function formValue(form: HTMLFormElement, name: string): string {
 
 function titleCase(value: string): string {
   return value.slice(0, 1).toLocaleUpperCase("en-US") + value.slice(1);
+}
+
+function sameHandle(left: string, right: string): boolean {
+  return normalizeHandle(left) === normalizeHandle(right);
 }
 
 function recapLine(depth: number): string {

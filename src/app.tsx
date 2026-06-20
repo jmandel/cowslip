@@ -1,6 +1,6 @@
 import React, { useEffect, useLayoutEffect, useRef } from "react";
 import { createRoot } from "react-dom/client";
-import { Check, CircleHelp, Copy, LogOut, UserPen, X } from "lucide-react";
+import { Check, CircleHelp, Copy, Home, LogOut, UserPen, X } from "lucide-react";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { STARTER_CATEGORIES, categoryLabel } from "./content/categories";
@@ -91,7 +91,8 @@ type GameState = {
   setUrl(params: Record<string, string | undefined>): void;
   copyRoom(): Promise<void>;
   openRoom(roomSlug: string): void;
-  leaveRoom(): void;
+  backHome(): void;
+  forgetRoom(roomSlug: string): void;
   claimHandle(handle: string): Promise<void>;
   switchHandle(): void;
   createGame(): Promise<void>;
@@ -122,6 +123,7 @@ type GameState = {
   rememberRoom(roomSlug: string, handle: string): void;
   ensureHandleClaimed(): Promise<void>;
   ensureHandleSeen(force?: boolean): Promise<void>;
+  ensureLobbyReady(): Promise<void>;
   ensureLobbyJoined(): Promise<void>;
   ensureLettersRevealed(): Promise<void>;
 };
@@ -205,6 +207,7 @@ const useGameStore = create<GameState>()(persist((set, get) => {
       set({ roomState, now: Date.now() });
       void get().ensureHandleClaimed();
       void get().ensureHandleSeen();
+      void get().ensureLobbyReady();
       void get().ensureLobbyJoined();
       void get().ensureLettersRevealed();
     });
@@ -251,8 +254,14 @@ const useGameStore = create<GameState>()(persist((set, get) => {
     get().setUrl({ room: roomSlug, handle: undefined, review: undefined });
   },
 
-  leaveRoom() {
+  backHome() {
     get().setUrl({ room: undefined, handle: undefined, review: undefined });
+  },
+
+  forgetRoom(roomSlugInput) {
+    const roomSlug = roomSlugFrom(roomSlugInput);
+    if (!roomSlug) return;
+    set({ rememberedRooms: get().rememberedRooms.filter((room) => room.roomSlug !== roomSlug) });
   },
 
   async claimHandle(handleInput) {
@@ -451,6 +460,28 @@ const useGameStore = create<GameState>()(persist((set, get) => {
     }
   },
 
+  async ensureLobbyReady() {
+    const { context, roomState } = get();
+    if (!roomState || !context.handle) return;
+    const normalizedHandle = normalizeHandle(context.handle);
+    if (!roomState.handles.some((handle) => handle.normalizedHandle === normalizedHandle)) return;
+    if (activeGame(roomState)) return;
+    const runtime = get().runtime;
+    const key = `${context.roomSlug}:${normalizedHandle}:create-lobby`;
+    if (runtime.pendingLobbyJoins.has(key)) return;
+    const result = commandCreateGame(roomState, context.handle);
+    if (!result.ok) {
+      set({ error: result.error });
+      return;
+    }
+    runtime.pendingLobbyJoins.add(key);
+    try {
+      await runtime.eventStore.append(result.events);
+    } finally {
+      runtime.pendingLobbyJoins.delete(key);
+    }
+  },
+
   async ensureLobbyJoined() {
     const { context, roomState } = get();
     if (!roomState || !context.handle) return;
@@ -542,7 +573,7 @@ function CowslipApp(): React.ReactElement {
   } else {
     const review = context.reviewGameId ? roomState.games.find((game) => game.id === context.reviewGameId) : undefined;
     const game = activeGame(roomState);
-    body = review ? <Review game={review} /> : game ? <GameView game={game} /> : <RoomHome />;
+    body = review ? <Review game={review} /> : game ? <GameView game={game} /> : <OpeningLobby />;
   }
 
   return (
@@ -563,7 +594,7 @@ function Shell(): React.ReactElement {
   const context = useGameStore((state) => state.context);
   const openHelp = useGameStore((state) => state.openHelp);
   const copyRoom = useGameStore((state) => state.copyRoom);
-  const leaveRoom = useGameStore((state) => state.leaveRoom);
+  const backHome = useGameStore((state) => state.backHome);
   const switchHandle = useGameStore((state) => state.switchHandle);
   const copyStatus = useGameStore((state) => state.copyStatus);
   const hasRoomContext = Boolean(context.roomSlug || context.handle);
@@ -571,6 +602,7 @@ function Shell(): React.ReactElement {
     <header className="topbar">
       <div className="topbar-brand">
         <a className="wordmark" href="./">
+          <img src="./assets/cowslip-icon.png" alt="" className="wordmark-flower" />
           Cowslip
         </a>
       </div>
@@ -589,9 +621,8 @@ function Shell(): React.ReactElement {
             ) : null}
             <div className="topbar-icon-actions">
               {context.roomSlug ? (
-                <button type="button" className="button topbar-leave-button" aria-label="Leave room" title="Leave room" onClick={leaveRoom} data-testid="leave-room">
-                  <LogOut aria-hidden="true" size={18} strokeWidth={2.5} />
-                  <span>Leave</span>
+                <button type="button" className="button icon-button topbar-icon-button" aria-label="Back to home" title="Back to home" onClick={backHome} data-testid="back-home">
+                  <Home aria-hidden="true" size={19} strokeWidth={2.5} />
                 </button>
               ) : null}
               {context.roomSlug ? (
@@ -627,7 +658,9 @@ function TopbarChip({ label, value, className = "" }: { label: string; value: st
   return (
     <span className={`topbar-chip ${className}`}>
       <span className="topbar-chip-label">{label}</span>
-      <span className="topbar-chip-value">{value}</span>
+      <span className="topbar-chip-value">
+        <span className="topbar-chip-text">{value}</span>
+      </span>
     </span>
   );
 }
@@ -703,14 +736,11 @@ function HelpDialog(): React.ReactElement {
 function RoomEntry(): React.ReactElement {
   const setUrl = useGameStore((state) => state.setUrl);
   const openRoom = useGameStore((state) => state.openRoom);
+  const forgetRoom = useGameStore((state) => state.forgetRoom);
   const rememberedRooms = useGameStore((state) => state.rememberedRooms);
   return (
     <section className="hero">
       <div className="plain-lockup">
-        <div className="landing-copy">
-          <h1>Cowslip</h1>
-          <p>A cooperative word game where every letter counts.</p>
-        </div>
         <div className="landing-art" aria-hidden="true">
           <img src="./assets/cowslip-flower.webp" alt="" className="landing-flower" />
         </div>
@@ -740,10 +770,15 @@ function RoomEntry(): React.ReactElement {
             <h2 className="card-title">Your Rooms</h2>
             <div className="remembered-room-list">
               {rememberedRooms.map((room) => (
-                <button type="button" className="remembered-room" key={room.roomSlug} onClick={() => openRoom(room.roomSlug)} data-testid={`remembered-room-${room.roomSlug}`}>
-                  <strong>{room.roomSlug}</strong>
-                  {room.handle ? <span>{room.handle}</span> : <span>Choose a name</span>}
-                </button>
+                <div className="remembered-room" key={room.roomSlug}>
+                  <button type="button" className="remembered-room-open" onClick={() => openRoom(room.roomSlug)} data-testid={`remembered-room-${room.roomSlug}`}>
+                    <strong>{room.roomSlug}</strong>
+                    {room.handle ? <span>{room.handle}</span> : <span>Choose a name</span>}
+                  </button>
+                  <button type="button" className="button icon-button remembered-room-leave" aria-label={`Leave ${room.roomSlug}`} title="Leave room" onClick={() => forgetRoom(room.roomSlug)} data-testid={`leave-remembered-room-${room.roomSlug}`}>
+                    <LogOut aria-hidden="true" size={18} strokeWidth={2.4} />
+                  </button>
+                </div>
               ))}
             </div>
           </section>
@@ -778,18 +813,12 @@ function HandleClaim(): React.ReactElement {
   );
 }
 
-function RoomHome(): React.ReactElement {
-  const createGame = useGameStore((state) => state.createGame);
+function OpeningLobby(): React.ReactElement {
   return (
     <section className="room-grid">
       <div className="paper-panel">
-        <h1>Start a Game</h1>
-        <p className="subtle">Create a new game, or review an earlier one.</p>
-        <div className="action-row">
-          <button type="button" className="button primary" onClick={() => void createGame()} data-testid="create-game">
-            Start Game
-          </button>
-        </div>
+        <h1>Opening Lobby</h1>
+        <p className="subtle">Getting this room ready.</p>
       </div>
       <History />
     </section>
@@ -802,7 +831,7 @@ function GameView({ game }: { game: Game }): React.ReactElement {
   if (game.status === "lobby") return <Lobby game={game} />;
   if (game.phase === "final") return <Final game={game} />;
   const round = currentRound(game);
-  if (!round) return <RoomHome />;
+  if (!round) return <OpeningLobby />;
   const role = roleForHandle(game, context.handle);
   if (game.pausedAt) {
     return (
@@ -1944,8 +1973,8 @@ function focusPrimaryAction(): void {
   const selectors = [
     '[data-testid="room-input"]',
     '[data-testid="handle-input"]',
-    '[data-testid="create-game"]',
     '[data-testid="start-game"]:not(:disabled)',
+    '[data-testid="toggle-ready"]',
     '[data-testid="category-option"]',
     '[data-testid="answer-input"]',
     '[data-testid^="letter-input-"]',

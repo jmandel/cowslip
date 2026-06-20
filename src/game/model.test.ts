@@ -87,8 +87,8 @@ function submitFirstDepth(state: RoomState): RoomState {
   const round = currentRound(game)!;
   state = applyRemembered(state, commandChooseCategory(state, "Alice", round.categoryOptions[0]!));
   state = applyRemembered(state, commandSubmitAnswer(state, "Bob", "Bale"));
-  state = applyRemembered(state, commandSubmitLetters(state, "Bob", new Map([[0, clampLetter("h")], [1, clampLetter("s")]])));
-  state = applyRemembered(state, commandSubmitLetters(state, "Cora", new Map([[2, clampLetter("c")], [3, clampLetter("w")]])));
+  state = applyRemembered(state, commandSubmitLetters(state, "Bob", new Map([[0, clampLetter("h")], [2, clampLetter("s")]])));
+  state = applyRemembered(state, commandSubmitLetters(state, "Cora", new Map([[1, clampLetter("c")], [3, clampLetter("w")]])));
   return state;
 }
 
@@ -254,12 +254,12 @@ describe("room command model", () => {
     state = applyRemembered(state, commandSubmitAnswer(state, "Bob", "Bale"));
     const aliceSubmit = commandSubmitLetters(state, "Alice", new Map([[0, "A"]]));
     expect(aliceSubmit.ok).toBe(false);
-    expect(commandSubmitLetters(state, "Bob", new Map([[0, "hay"], [1, "S"]])).ok).toBe(false);
-    expect(commandSubmitLetters(state, "Bob", new Map([[0, "!"], [1, "S"]])).ok).toBe(false);
+    expect(commandSubmitLetters(state, "Bob", new Map([[0, "hay"], [2, "S"]])).ok).toBe(false);
+    expect(commandSubmitLetters(state, "Bob", new Map([[0, "!"], [2, "S"]])).ok).toBe(false);
 
-    state = applyRemembered(state, commandSubmitLetters(state, "Bob", new Map([[0, "H"], [1, "T"]])));
+    state = applyRemembered(state, commandSubmitLetters(state, "Bob", new Map([[0, "H"], [2, "T"]])));
     expect(currentRound(activeGame(state)!)!.phase).toBe("letter-entry");
-    state = applyRemembered(state, commandSubmitLetters(state, "Cora", new Map([[2, "C"], [3, "W"]])));
+    state = applyRemembered(state, commandSubmitLetters(state, "Cora", new Map([[1, "C"], [3, "W"]])));
     const revealed = currentRound(activeGame(state)!)!;
     expect(revealed.phase).toBe("guesser-call");
     expect(revealed.entries.every((entry) => entry.revealed)).toBe(true);
@@ -275,7 +275,7 @@ describe("room command model", () => {
         "v",
         new Map([
           [0, "c"],
-          [1, "b"],
+          [2, "b"],
         ]),
       ),
     );
@@ -293,16 +293,16 @@ describe("room command model", () => {
         "Bob",
         new Map<number, { letter: string; endsWord: boolean }>([
           [0, { letter: "c", endsWord: true }],
-          [1, { letter: "b", endsWord: false }],
+          [2, { letter: "b", endsWord: false }],
         ]),
       ),
     );
-    state = applyRemembered(state, commandSubmitLetters(state, "Cora", new Map([[2, "H"], [3, "W"]])));
+    state = applyRemembered(state, commandSubmitLetters(state, "Cora", new Map([[1, "H"], [3, "W"]])));
 
     let round = currentRound(activeGame(state)!)!;
     expect(round.phase).toBe("guesser-call");
     expect(round.entries.find((entry) => entry.rowIndex === 0)?.endsWord).toBe(true);
-    expect(round.entries.find((entry) => entry.rowIndex === 1)?.endsWord).toBe(false);
+    expect(round.entries.find((entry) => entry.rowIndex === 2)?.endsWord).toBe(false);
 
     state = applyRemembered(state, commandRequestMoreLetters(state, "Alice"));
     round = currentRound(activeGame(state)!)!;
@@ -318,13 +318,13 @@ describe("room command model", () => {
 
   test("a skipped clue cell is a stored blank and stays editable on later depths", () => {
     let state = chooseCurrentCategoryAndAnswer(startThreePlayerGame(), "Bale");
-    const badSkipAndLetter = commandSubmitLetters(state, "Bob", new Map<number, string | ClueCellInput>([[0, { letter: "C", skipped: true }], [1, "B"]]));
+    const badSkipAndLetter = commandSubmitLetters(state, "Bob", new Map<number, string | ClueCellInput>([[0, { letter: "C", skipped: true }], [2, "B"]]));
     expect(badSkipAndLetter.ok).toBe(false);
-    const badSkipAndEnd = commandSubmitLetters(state, "Bob", new Map<number, string | ClueCellInput>([[0, { skipped: true, endsWord: true }], [1, "B"]]));
+    const badSkipAndEnd = commandSubmitLetters(state, "Bob", new Map<number, string | ClueCellInput>([[0, { skipped: true, endsWord: true }], [2, "B"]]));
     expect(badSkipAndEnd.ok).toBe(false);
 
-    state = applyRemembered(state, commandSubmitLetters(state, "Bob", new Map<number, string | ClueCellInput>([[0, { skipped: true }], [1, "B"]])));
-    state = applyRemembered(state, commandSubmitLetters(state, "Cora", new Map([[2, "H"], [3, "W"]])));
+    state = applyRemembered(state, commandSubmitLetters(state, "Bob", new Map<number, string | ClueCellInput>([[0, { skipped: true }], [2, "B"]])));
+    state = applyRemembered(state, commandSubmitLetters(state, "Cora", new Map([[1, "H"], [3, "W"]])));
 
     let round = currentRound(activeGame(state)!)!;
     expect(round.phase).toBe("guesser-call");
@@ -368,8 +368,8 @@ describe("room command model", () => {
     state = applyRemembered(state, commandChooseCategory(state, "Alice", round.categoryOptions[0]!));
     state = applyRemembered(state, commandSubmitAnswer(state, "Bob", "Bale"));
 
-    const bobSubmit = commandSubmitLetters(state, "Bob", new Map([[0, "H"], [1, "S"]]));
-    const coraSubmit = commandSubmitLetters(state, "Cora", new Map([[2, "C"], [3, "W"]]));
+    const bobSubmit = commandSubmitLetters(state, "Bob", new Map([[0, "H"], [2, "S"]]));
+    const coraSubmit = commandSubmitLetters(state, "Cora", new Map([[1, "C"], [3, "W"]]));
     expect(bobSubmit.ok).toBe(true);
     expect(coraSubmit.ok).toBe(true);
     if (!bobSubmit.ok || !coraSubmit.ok) throw new Error("expected stale letter entry commands");
@@ -447,7 +447,7 @@ describe("room command model", () => {
     const round = currentRound(game)!;
     state = applyRemembered(state, commandChooseCategory(state, "Alice", round.categoryOptions[0]!));
     state = applyRemembered(state, commandSubmitAnswer(state, "Bob", "Bale"));
-    const result = commandSubmitLetters(state, "Bob", new Map([[0, "H"], [1, "S"]]));
+    const result = commandSubmitLetters(state, "Bob", new Map([[0, "H"], [2, "S"]]));
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("expected letters");
     remember(result.events);

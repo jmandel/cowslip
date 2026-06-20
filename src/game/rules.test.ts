@@ -84,12 +84,14 @@ describe("rotation", () => {
     }
   });
 
-  test("three-player variant keeps assigned rows onward after the second letter", () => {
+  test("three-player variant starts rows alternating and swaps all rows on the first rotation", () => {
     const seats = players(3);
-    const signatures = Array.from({ length: 5 }, (_, index) => assignmentSignature(assignmentsForDepth(seats, 1, index + 1)));
-    expect(new Set(signatures.slice(0, 4)).size).toBe(4);
-    expect(signatures[1]).not.toBe(signatures[2]);
-    expect(signatures[2]).not.toBe(signatures[3]);
+    const depthOne = assignmentsForDepth(seats, 1, 1);
+    const depthTwo = assignmentsForDepth(seats, 1, 2);
+    const depthThree = assignmentsForDepth(seats, 1, 3);
+    expect(depthOne.map((row) => row.holderUserId)).toEqual(["u1", "u2", "u1", "u2"]);
+    expect(depthTwo.map((row) => row.holderUserId)).toEqual(["u2", "u1", "u2", "u1"]);
+    expect(depthThree.map((row) => row.holderUserId)).toEqual(depthOne.map((row) => row.holderUserId));
   });
 
   test("property: every supported count, round, and depth preserves row handoff invariants", () => {
@@ -134,7 +136,7 @@ describe("rotation", () => {
         }
 
         expect(rowDepthKeys.size).toBe(rowCount * 5);
-        const repeatPeriod = count === 3 ? 4 : count - 2;
+        const repeatPeriod = count === 3 ? 2 : count - 2;
         for (let depth = 2; depth + repeatPeriod <= 5; depth += 1) {
           expect(signatures.get(depth + repeatPeriod)).toBe(signatures.get(depth));
         }

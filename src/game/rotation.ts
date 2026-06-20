@@ -68,39 +68,18 @@ function threePlayerAssignments(players: PlayerSeat[], roundNumber: number, dept
   const { clueGivers } = rolesForRound(players, roundNumber);
   if (clueGivers.length !== 2) throw new Error("Three-player variant needs exactly two clue givers.");
 
-  let slots: RowAssignment[] = [
-    { rowIndex: 0, holderUserId: clueGivers[0]!.userId, holderSeatNumber: clueGivers[0]!.seatNumber, slot: "left" },
-    { rowIndex: 1, holderUserId: clueGivers[0]!.userId, holderSeatNumber: clueGivers[0]!.seatNumber, slot: "right" },
-    { rowIndex: 2, holderUserId: clueGivers[1]!.userId, holderSeatNumber: clueGivers[1]!.seatNumber, slot: "left" },
-    { rowIndex: 3, holderUserId: clueGivers[1]!.userId, holderSeatNumber: clueGivers[1]!.seatNumber, slot: "right" },
-  ];
-
-  for (let i = 1; i < depth; i += 1) {
-    const byClueGiver = clueGivers.map((clueGiver) => ({
-      clueGiver,
-      left: slots.find((slot) => slot.holderUserId === clueGiver.userId && slot.slot === "left")!,
-      right: slots.find((slot) => slot.holderUserId === clueGiver.userId && slot.slot === "right")!,
-    }));
-    slots = byClueGiver.flatMap((entry, clueGiverIndex) => {
-      const prev = byClueGiver[(clueGiverIndex - 1 + byClueGiver.length) % byClueGiver.length]!;
-      return [
-        {
-          rowIndex: entry.right.rowIndex,
-          holderUserId: entry.clueGiver.userId,
-          holderSeatNumber: entry.clueGiver.seatNumber,
-          slot: "left" as const,
-        },
-        {
-          rowIndex: prev.left.rowIndex,
-          holderUserId: entry.clueGiver.userId,
-          holderSeatNumber: entry.clueGiver.seatNumber,
-          slot: "right" as const,
-        },
-      ];
-    });
-  }
-
-  return slots.sort((a, b) => a.rowIndex - b.rowIndex);
+  const swapped = depth % 2 === 0;
+  return Array.from({ length: 4 }, (_, rowIndex) => {
+    const starterIndex = rowIndex % 2;
+    const holderIndex = swapped ? 1 - starterIndex : starterIndex;
+    const holder = clueGivers[holderIndex]!;
+    return {
+      rowIndex,
+      holderUserId: holder.userId,
+      holderSeatNumber: holder.seatNumber,
+      slot: rowIndex < 2 ? "left" : "right",
+    };
+  });
 }
 
 export function holderForRow(

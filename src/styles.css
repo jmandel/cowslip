@@ -79,13 +79,12 @@ button {
 }
 
 .topbar {
-  min-height: 56px;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   gap: 10px 16px;
-  align-items: start;
+  align-items: center;
   border-bottom: 1px solid #111;
-  padding-bottom: 12px;
+  padding: 12px 0;
   margin-bottom: 18px;
 }
 
@@ -96,6 +95,9 @@ button {
 }
 
 .wordmark {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   color: #111;
   font-size: 1.25rem;
   font-weight: 700;
@@ -103,17 +105,23 @@ button {
   text-decoration: none;
 }
 
+.wordmark-flower {
+  width: 28px;
+  height: 28px;
+  object-fit: contain;
+}
+
 .topbar-global-actions {
   justify-self: end;
 }
 
 .topbar-actions {
-  grid-column: 2;
+  grid-column: 1 / -1;
   grid-row: 2;
   display: grid;
-  justify-items: end;
+  justify-items: stretch;
   gap: 6px;
-  width: min(100%, 720px);
+  width: 100%;
   min-width: 0;
 }
 
@@ -147,7 +155,7 @@ button {
 
 .topbar-chip {
   display: inline-grid;
-  grid-template-columns: var(--topbar-chip-label-width) minmax(0, auto);
+  grid-template-columns: var(--topbar-chip-label-width) minmax(0, 1fr);
   width: 100%;
   min-width: 0;
   min-height: var(--topbar-control-height);
@@ -157,7 +165,7 @@ button {
 
 .topbar-chip-label,
 .topbar-chip-value {
-  display: grid;
+  display: flex;
   align-items: center;
   min-width: 0;
   padding: 0 10px;
@@ -177,6 +185,15 @@ button {
 
 .topbar-chip-value {
   color: #111;
+}
+
+.topbar-chip-text {
+  display: block;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .button,
@@ -225,15 +242,6 @@ button {
   padding: 0;
   display: inline-grid;
   place-items: center;
-}
-
-.topbar-leave-button {
-  min-height: var(--topbar-control-height);
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 0 10px;
-  white-space: nowrap;
 }
 
 .toast {
@@ -292,7 +300,6 @@ h2 {
 .plain-lockup {
   display: grid;
   align-content: center;
-  gap: clamp(18px, 3vw, 30px);
   position: relative;
 }
 
@@ -305,11 +312,6 @@ h2 {
 .plain-lockup p {
   max-width: 26rem;
   font-size: clamp(1.05rem, 2vw, 1.35rem);
-}
-
-.landing-copy {
-  position: relative;
-  z-index: 1;
 }
 
 .landing-art {
@@ -417,14 +419,34 @@ textarea {
 }
 
 .remembered-room {
-  display: flex;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--topbar-control-height);
   gap: 12px;
   width: 100%;
   border: 1px solid #111;
   background: #fff;
-  padding: 12px;
+  padding: 6px;
+  align-items: center;
+}
+
+.remembered-room-open {
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: #111;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px;
   text-align: left;
+  font: inherit;
+}
+
+.remembered-room-open span,
+.remembered-room-open strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .handle-page {
@@ -652,16 +674,6 @@ textarea {
   font-weight: 700;
 }
 
-.slot.frozen::after {
-  content: "";
-  position: absolute;
-  top: 4px;
-  right: 4px;
-  width: 6px;
-  height: 6px;
-  background: #111;
-}
-
 .slot.skipped {
   background: repeating-linear-gradient(135deg, #fff 0 7px, #f1f1f1 7px 14px);
 }
@@ -716,10 +728,18 @@ textarea {
 .cell-period,
 .cell-editor[data-end-word="true"]::after {
   position: absolute;
-  right: 7px;
-  bottom: 4px;
-  font-size: 0.7rem;
+  top: 3px;
+  right: 3px;
+  width: 15px;
+  height: 15px;
+  display: grid;
+  place-items: center;
+  background: #111;
+  color: #fff;
+  font-size: 1.15rem;
+  font-weight: 900;
   line-height: 1;
+  padding-bottom: 6px;
 }
 
 .cell-editor {

@@ -143,6 +143,8 @@ function applyEvent(state: RoomState, event: GameEvent): void {
   if (event.type === "game.created") {
     const gameId = stringPayload(event, "gameId");
     if (state.games.some((game) => game.id === gameId)) return;
+    const currentActive = activeGame(state);
+    if (currentActive && currentActive.status !== "complete" && currentActive.status !== "void") return;
     const hostHandle = stringPayload(event, "hostHandle");
     const game: Game = {
       id: gameId,

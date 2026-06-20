@@ -728,18 +728,13 @@ textarea {
 .cell-period,
 .cell-editor[data-end-word="true"]::after {
   position: absolute;
-  top: 3px;
+  bottom: 3px;
   right: 3px;
-  width: 15px;
-  height: 15px;
-  display: grid;
-  place-items: center;
+  width: 10px;
+  height: 10px;
   background: #111;
-  color: #fff;
-  font-size: 1.15rem;
-  font-weight: 900;
-  line-height: 1;
-  padding-bottom: 6px;
+  font-size: 0;
+  line-height: 0;
 }
 
 .cell-editor {
@@ -747,7 +742,7 @@ textarea {
 }
 
 .cell-editor[data-end-word="true"]::after {
-  content: ".";
+  content: "";
   pointer-events: none;
 }
 

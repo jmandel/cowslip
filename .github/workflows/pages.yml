@@ -27,8 +27,14 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      - name: Setup Chrome
+        id: setup-chrome
+        uses: browser-actions/setup-chrome@v2
+
       - name: Test
         run: bun test
+        env:
+          CHROME_BIN: ${{ steps.setup-chrome.outputs.chrome-path }}
 
       - name: Typecheck
         run: bun run typecheck

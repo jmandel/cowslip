@@ -1,7 +1,7 @@
-import { DEFAULT_PACK_ID } from "../config";
-import type { DifficultyHint, Field } from "../game/types";
+import { CATEGORY_OFFER_COUNT, DEFAULT_PACK_ID } from "../config";
+import type { DifficultyHint, Category } from "../game/types";
 
-// Fields name a kind of thing; the picker invents a specific member.
+// Categories name a kind of thing; the answer writer invents a specific member.
 // e.g. Planet -> Mars, Condiment -> Ketchup, Sci-Fi Movie -> Alien.
 // Keep them short and concrete so the clue cells stay interpretable.
 const easy = [
@@ -30,7 +30,7 @@ const easy = [
   "Shape",
   "Planet",
   "Holiday",
-  "Season",
+  "Month",
   "Clothing Item",
   "Hat",
   "Toy",
@@ -120,7 +120,7 @@ function slugify(label: string): string {
     .replace(/^-|-$/g, "");
 }
 
-function fieldsFor(labels: string[], difficultyHint: DifficultyHint): Field[] {
+function categoriesFor(labels: string[], difficultyHint: DifficultyHint): Category[] {
   return labels.map((label) => ({
     id: slugify(label),
     label,
@@ -132,23 +132,28 @@ function fieldsFor(labels: string[], difficultyHint: DifficultyHint): Field[] {
   }));
 }
 
-export const STARTER_FIELDS: Field[] = [
-  ...fieldsFor(easy, "easy"),
-  ...fieldsFor(medium, "medium"),
-  ...fieldsFor(spicy, "spicy"),
+export const STARTER_CATEGORIES: Category[] = [
+  ...categoriesFor(easy, "easy"),
+  ...categoriesFor(medium, "medium"),
+  ...categoriesFor(spicy, "spicy"),
 ];
 
-export function fieldById(fieldId: string): Field | undefined {
-  return STARTER_FIELDS.find((field) => field.id === fieldId);
+export function categoryById(categoryId: string): Category | undefined {
+  return STARTER_CATEGORIES.find((category) => category.id === categoryId);
 }
 
-export function fieldLabel(fieldId: string): string {
-  return fieldById(fieldId)?.label ?? fieldId;
+export function categoryLabel(categoryId: string): string {
+  return categoryById(categoryId)?.label ?? categoryId;
 }
 
-export function planFieldOptions(seed: string, totalRounds: number, count = 2, fieldIds = activeFieldIds()): string[][] {
-  if (totalRounds <= 0 || count <= 0 || fieldIds.length === 0) return [];
-  const targetCount = Math.min(count, fieldIds.length);
+export function planCategoryOptions(
+  planKey: string,
+  totalRounds: number,
+  count = CATEGORY_OFFER_COUNT,
+  categoryIds = activeCategoryIds(),
+): string[][] {
+  if (totalRounds <= 0 || count <= 0 || categoryIds.length === 0) return [];
+  const targetCount = Math.min(count, categoryIds.length);
   const rounds: string[][] = [];
   let deck: string[] = [];
   let cycle = 0;
@@ -157,12 +162,12 @@ export function planFieldOptions(seed: string, totalRounds: number, count = 2, f
     const roundOptions: string[] = [];
     while (roundOptions.length < targetCount) {
       if (!deck.length) {
-        const nextDeckSource = fieldIds.filter((fieldId) => !roundOptions.includes(fieldId));
-        deck = seededShuffle(nextDeckSource.length ? nextDeckSource : fieldIds, `${seed}:fields:${cycle}`);
+        const nextDeckSource = categoryIds.filter((categoryId) => !roundOptions.includes(categoryId));
+        deck = deterministicShuffle(nextDeckSource.length ? nextDeckSource : categoryIds, `${planKey}:categories:${cycle}`);
         cycle += 1;
       }
-      const fieldId = deck.shift();
-      if (fieldId && !roundOptions.includes(fieldId)) roundOptions.push(fieldId);
+      const categoryId = deck.shift();
+      if (categoryId && !roundOptions.includes(categoryId)) roundOptions.push(categoryId);
     }
     rounds.push(roundOptions);
   }
@@ -170,16 +175,16 @@ export function planFieldOptions(seed: string, totalRounds: number, count = 2, f
   return rounds;
 }
 
-export function pickFieldOptions(seed: string, roundNumber: number, count = 2): string[] {
-  return planFieldOptions(seed, roundNumber, count)[roundNumber - 1] ?? [];
+export function pickCategoryOptions(planKey: string, roundNumber: number, count = CATEGORY_OFFER_COUNT): string[] {
+  return planCategoryOptions(planKey, roundNumber, count)[roundNumber - 1] ?? [];
 }
 
-function activeFieldIds(): string[] {
-  return STARTER_FIELDS.filter((field) => field.active).map((field) => field.id);
+function activeCategoryIds(): string[] {
+  return STARTER_CATEGORIES.filter((category) => category.active).map((category) => category.id);
 }
 
-function seededShuffle(values: string[], seed: string): string[] {
-  const random = mulberry32(hashString(seed));
+function deterministicShuffle(values: string[], planKey: string): string[] {
+  const random = mulberry32(hashString(planKey));
   const shuffled = [...values];
   for (let index = shuffled.length - 1; index > 0; index -= 1) {
     const swapIndex = Math.floor(random() * (index + 1));
@@ -197,10 +202,10 @@ function hashString(value: string): number {
   return hash >>> 0;
 }
 
-function mulberry32(seed: number): () => number {
+function mulberry32(state: number): () => number {
   return () => {
-    seed += 0x6d2b79f5;
-    let value = seed;
+    state += 0x6d2b79f5;
+    let value = state;
     value = Math.imul(value ^ (value >>> 15), value | 1);
     value ^= value + Math.imul(value ^ (value >>> 7), value | 61);
     return ((value ^ (value >>> 14)) >>> 0) / 4294967296;

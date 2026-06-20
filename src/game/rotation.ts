@@ -5,9 +5,9 @@ export type PlayerSeat = {
 };
 
 export type RolePlan = {
-  farmer: PlayerSeat;
-  sower: PlayerSeat;
-  hands: PlayerSeat[];
+  guesser: PlayerSeat;
+  answerWriter: PlayerSeat;
+  clueGivers: PlayerSeat[];
 };
 
 export type RowAssignment = {
@@ -26,15 +26,15 @@ export function rolesForRound(players: PlayerSeat[], roundNumber: number): RoleP
   if (seats.length < 3 || seats.length > 8) {
     throw new RangeError("The game supports 3-8 players.");
   }
-  const farmer = seats[(roundNumber - 1) % seats.length];
-  if (!farmer) throw new Error("Could not assign guesser.");
-  const sower = seats[(farmer.seatNumber + 1) % seats.length];
-  if (!sower) throw new Error("Could not assign picker.");
-  const hands = seats
-    .slice(farmer.seatNumber + 1)
-    .concat(seats.slice(0, farmer.seatNumber))
-    .filter((seat) => seat.userId !== farmer.userId);
-  return { farmer, sower, hands };
+  const guesser = seats[(roundNumber - 1) % seats.length];
+  if (!guesser) throw new Error("Could not assign guesser.");
+  const answerWriter = seats[(guesser.seatNumber + 1) % seats.length];
+  if (!answerWriter) throw new Error("Could not assign answer writer.");
+  const clueGivers = seats
+    .slice(guesser.seatNumber + 1)
+    .concat(seats.slice(0, guesser.seatNumber))
+    .filter((seat) => seat.userId !== guesser.userId);
+  return { guesser, answerWriter, clueGivers };
 }
 
 export function rowCountForPlayers(playerCount: number): number {
@@ -50,10 +50,10 @@ export function assignmentsForDepth(players: PlayerSeat[], roundNumber: number, 
 }
 
 function standardAssignments(players: PlayerSeat[], roundNumber: number, depth: number): RowAssignment[] {
-  const { hands } = rolesForRound(players, roundNumber);
-  const offset = depth === 1 ? 0 : ((depth - 2) % (hands.length - 1)) + 1;
-  return hands.map((_, rowIndex) => {
-    const holder = hands[(rowIndex + offset) % hands.length];
+  const { clueGivers } = rolesForRound(players, roundNumber);
+  const offset = depth === 1 ? 0 : ((depth - 2) % (clueGivers.length - 1)) + 1;
+  return clueGivers.map((_, rowIndex) => {
+    const holder = clueGivers[(rowIndex + offset) % clueGivers.length];
     if (!holder) throw new Error("Missing holder.");
     return {
       rowIndex,
@@ -65,35 +65,35 @@ function standardAssignments(players: PlayerSeat[], roundNumber: number, depth: 
 }
 
 function threePlayerAssignments(players: PlayerSeat[], roundNumber: number, depth: number): RowAssignment[] {
-  const { hands } = rolesForRound(players, roundNumber);
-  if (hands.length !== 2) throw new Error("Three-player variant needs exactly two cluers.");
+  const { clueGivers } = rolesForRound(players, roundNumber);
+  if (clueGivers.length !== 2) throw new Error("Three-player variant needs exactly two clue givers.");
 
   let slots: RowAssignment[] = [
-    { rowIndex: 0, holderUserId: hands[0]!.userId, holderSeatNumber: hands[0]!.seatNumber, slot: "left" },
-    { rowIndex: 1, holderUserId: hands[0]!.userId, holderSeatNumber: hands[0]!.seatNumber, slot: "right" },
-    { rowIndex: 2, holderUserId: hands[1]!.userId, holderSeatNumber: hands[1]!.seatNumber, slot: "left" },
-    { rowIndex: 3, holderUserId: hands[1]!.userId, holderSeatNumber: hands[1]!.seatNumber, slot: "right" },
+    { rowIndex: 0, holderUserId: clueGivers[0]!.userId, holderSeatNumber: clueGivers[0]!.seatNumber, slot: "left" },
+    { rowIndex: 1, holderUserId: clueGivers[0]!.userId, holderSeatNumber: clueGivers[0]!.seatNumber, slot: "right" },
+    { rowIndex: 2, holderUserId: clueGivers[1]!.userId, holderSeatNumber: clueGivers[1]!.seatNumber, slot: "left" },
+    { rowIndex: 3, holderUserId: clueGivers[1]!.userId, holderSeatNumber: clueGivers[1]!.seatNumber, slot: "right" },
   ];
 
   for (let i = 1; i < depth; i += 1) {
-    const byHand = hands.map((hand) => ({
-      hand,
-      left: slots.find((slot) => slot.holderUserId === hand.userId && slot.slot === "left")!,
-      right: slots.find((slot) => slot.holderUserId === hand.userId && slot.slot === "right")!,
+    const byClueGiver = clueGivers.map((clueGiver) => ({
+      clueGiver,
+      left: slots.find((slot) => slot.holderUserId === clueGiver.userId && slot.slot === "left")!,
+      right: slots.find((slot) => slot.holderUserId === clueGiver.userId && slot.slot === "right")!,
     }));
-    slots = byHand.flatMap((entry, handIndex) => {
-      const prev = byHand[(handIndex - 1 + byHand.length) % byHand.length]!;
+    slots = byClueGiver.flatMap((entry, clueGiverIndex) => {
+      const prev = byClueGiver[(clueGiverIndex - 1 + byClueGiver.length) % byClueGiver.length]!;
       return [
         {
           rowIndex: entry.right.rowIndex,
-          holderUserId: entry.hand.userId,
-          holderSeatNumber: entry.hand.seatNumber,
+          holderUserId: entry.clueGiver.userId,
+          holderSeatNumber: entry.clueGiver.seatNumber,
           slot: "left" as const,
         },
         {
           rowIndex: prev.left.rowIndex,
-          holderUserId: entry.hand.userId,
-          holderSeatNumber: entry.hand.seatNumber,
+          holderUserId: entry.clueGiver.userId,
+          holderSeatNumber: entry.clueGiver.seatNumber,
           slot: "right" as const,
         },
       ];

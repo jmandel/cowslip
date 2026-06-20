@@ -24,7 +24,7 @@ This repo deploys to GitHub Pages with the workflow in `.github/workflows/pages.
 The Pages target is:
 
 ```text
-https://joshuamandel.com/sowsear/
+https://joshuamandel.com/cowslip/
 ```
 
 `BUN_PUBLIC_INSTANT_APP_ID` is public client configuration and is supplied as a GitHub repository variable. No Instant admin token is required for the static Pages build.

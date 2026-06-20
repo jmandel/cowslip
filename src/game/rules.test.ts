@@ -37,7 +37,7 @@ describe("guess normalization", () => {
   test("normalizes only conservative variants", () => {
     expect(normalizeGuess(" The   Beatles ")).toBe("the beatles");
     expect(normalizeGuess("SPIDER\u2013MAN")).toBe("spider-man");
-    expect(normalizeGuess("Sow\u2019s Ear")).toBe("sow's ear");
+    expect(normalizeGuess("Cafe\u2019s Menu")).toBe("cafe's menu");
     expect(normalizeGuess("Beatle")).not.toBe(normalizeGuess("The Beatles"));
     expect(normalizeGuess("cafe\u0301")).toBe(normalizeGuess("café"));
   });
@@ -46,35 +46,35 @@ describe("guess normalization", () => {
 describe("rotation", () => {
   test("assigns roles from fixed seat order", () => {
     const plan = rolesForRound(players(5), 2);
-    expect(plan.farmer.userId).toBe("u1");
-    expect(plan.sower.userId).toBe("u2");
-    expect(plan.hands.map((hand) => hand.userId)).toEqual(["u2", "u3", "u4", "u0"]);
+    expect(plan.guesser.userId).toBe("u1");
+    expect(plan.answerWriter.userId).toBe("u2");
+    expect(plan.clueGivers.map((clueGiver) => clueGiver.userId)).toEqual(["u2", "u3", "u4", "u0"]);
   });
 
-  test("standard rotations keep one holder per row and no farmer holder", () => {
+  test("standard rotations keep one holder per row and no guesser holder", () => {
     for (const count of [4, 5, 6, 7, 8]) {
       const seats = players(count);
       for (let roundNumber = 1; roundNumber <= count; roundNumber += 1) {
-        const farmer = rolesForRound(seats, roundNumber).farmer;
+        const guesser = rolesForRound(seats, roundNumber).guesser;
         for (let depth = 1; depth <= 5; depth += 1) {
           const assignments = assignmentsForDepth(seats, roundNumber, depth);
           expect(assignments).toHaveLength(rowCountForPlayers(count));
           expect(new Set(assignments.map((row) => row.rowIndex)).size).toBe(rowCountForPlayers(count));
-          expect(assignments.some((row) => row.holderUserId === farmer.userId)).toBe(false);
+          expect(assignments.some((row) => row.holderUserId === guesser.userId)).toBe(false);
         }
       }
     }
   });
 
-  test("three-player variant gives both cluers two rows at every depth", () => {
+  test("three-player variant gives both clue givers two rows at every depth", () => {
     const seats = players(3);
     for (let roundNumber = 1; roundNumber <= 6; roundNumber += 1) {
-      const farmer = rolesForRound(seats, roundNumber).farmer;
+      const guesser = rolesForRound(seats, roundNumber).guesser;
       for (let depth = 1; depth <= 5; depth += 1) {
         const assignments = assignmentsForDepth(seats, roundNumber, depth);
         expect(assignments).toHaveLength(4);
         expect(new Set(assignments.map((row) => row.rowIndex)).size).toBe(4);
-        expect(assignments.some((row) => row.holderUserId === farmer.userId)).toBe(false);
+        expect(assignments.some((row) => row.holderUserId === guesser.userId)).toBe(false);
         const holderCounts = new Map<string, number>();
         for (const row of assignments) {
           holderCounts.set(row.holderUserId, (holderCounts.get(row.holderUserId) ?? 0) + 1);
@@ -84,7 +84,7 @@ describe("rotation", () => {
     }
   });
 
-  test("three-player variant keeps handing rows onward after the second letter", () => {
+  test("three-player variant keeps assigned rows onward after the second letter", () => {
     const seats = players(3);
     const signatures = Array.from({ length: 5 }, (_, index) => assignmentSignature(assignmentsForDepth(seats, 1, index + 1)));
     expect(new Set(signatures.slice(0, 4)).size).toBe(4);
@@ -92,20 +92,20 @@ describe("rotation", () => {
     expect(signatures[2]).not.toBe(signatures[3]);
   });
 
-  test("property: every supported count, round, and depth preserves Row handoff invariants", () => {
+  test("property: every supported count, round, and depth preserves row handoff invariants", () => {
     for (let count = 3; count <= 8; count += 1) {
       const seats = players(count);
       const rowCount = rowCountForPlayers(count);
       for (let roundNumber = 1; roundNumber <= roundsForPlayerCount(count); roundNumber += 1) {
         const roles = rolesForRound(seats, roundNumber);
-        const handIds = new Set(roles.hands.map((hand) => hand.userId));
+        const clueGiverIds = new Set(roles.clueGivers.map((clueGiver) => clueGiver.userId));
         const rowDepthKeys = new Set<string>();
         const signatures = new Map<number, string>();
         const starterByRow = new Map<number, string>();
 
-        expect(handIds.has(roles.farmer.userId)).toBe(false);
-        expect(handIds.has(roles.sower.userId)).toBe(true);
-        expect(roles.hands).toHaveLength(count - 1);
+        expect(clueGiverIds.has(roles.guesser.userId)).toBe(false);
+        expect(clueGiverIds.has(roles.answerWriter.userId)).toBe(true);
+        expect(roles.clueGivers).toHaveLength(count - 1);
 
         for (let depth = 1; depth <= 5; depth += 1) {
           const assignments = assignmentsForDepth(seats, roundNumber, depth);
@@ -114,8 +114,8 @@ describe("rotation", () => {
 
           expect(assignments).toHaveLength(rowCount);
           expect(rowIndices).toEqual(Array.from({ length: rowCount }, (_, index) => index));
-          expect(assignments.some((row) => row.holderUserId === roles.farmer.userId)).toBe(false);
-          expect(assignments.every((row) => handIds.has(row.holderUserId))).toBe(true);
+          expect(assignments.some((row) => row.holderUserId === roles.guesser.userId)).toBe(false);
+          expect(assignments.every((row) => clueGiverIds.has(row.holderUserId))).toBe(true);
 
           for (const assignment of assignments) {
             rowDepthKeys.add(`${assignment.rowIndex}:${depth}`);
@@ -142,7 +142,7 @@ describe("rotation", () => {
     }
   });
 
-  test("cluers never receive Rows they started after the first letter in standard rotation", () => {
+  test("clue givers never receive Rows they started after the first letter in standard rotation", () => {
     for (let count = 4; count <= 8; count += 1) {
       const seats = players(count);
       for (let roundNumber = 1; roundNumber <= roundsForPlayerCount(count); roundNumber += 1) {

@@ -3,31 +3,30 @@ import { createRoot } from "react-dom/client";
 import { Check, CircleHelp, Copy, Home, UserPen, X } from "lucide-react";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
-import { STARTER_FIELDS, fieldLabel } from "./content/fields";
+import { STARTER_CATEGORIES, categoryLabel } from "./content/categories";
 import {
   activeGame,
-  commandAdjudicate,
-  commandAdvanceAfterRecap,
+  commandJudgeGuess,
+  commandAdvanceRound,
   commandClaimHost,
-  commandChooseField,
+  commandChooseCategory,
   commandClaimHandle,
-  commandCreateSeason,
+  commandCreateGame,
   commandGuess,
-  commandJoinSeason,
-  commandMarkHandleSeen,
+  commandJoinGame,
   commandMoveSeat,
-  commandPauseSeason,
-  commandPlantLetters,
-  commandPlantSeed,
+  commandPauseGame,
+  commandSubmitLetters,
+  commandSubmitAnswer,
   commandRandomizeSeats,
-  commandResumeSeason,
+  commandResumeGame,
   commandSetReady,
-  commandSpoil,
-  commandStartSeason,
+  commandPassRound,
+  commandStartGame,
   commandTransferHost,
-  commandTrySprout,
-  commandVoidHarvest,
-  commandWait,
+  commandTryRevealLetters,
+  commandVoidRound,
+  commandRequestMoreLetters,
   currentRound,
   finalScore,
   normalizeHandle,
@@ -35,12 +34,12 @@ import {
   roleForHandle,
   rowEntriesThroughDepth,
   rowIsComplete,
-  rowsHeldForClue,
+  rowsHeldByClueGiver,
   roomSlugFrom,
   trailingBlankEntriesForRow,
 } from "./game/model";
 import { clampLetter, pointsForDepth } from "./game/rules";
-import type { ClueCellInput, ClueEntry, CommandResult, Game, RoomState, Round, Row } from "./game/types";
+import type { ClueCellInput, ClueEntry, CommandResult, Game, RoomPresence, RoomState, Round, Row } from "./game/types";
 import { createEventStore, type EventStore } from "./store/event-store";
 
 type AppContext = {
@@ -55,28 +54,32 @@ type RememberedRoom = {
   updatedAt: number;
 };
 
-type SowsEarRuntime = {
+type GameRuntime = {
   eventStore: EventStore;
   unsubscribeEvents: (() => void) | undefined;
+  unsubscribePresence: (() => void) | undefined;
   seenInterval: number | undefined;
   copyResetTimer: number | undefined;
   pendingClaims: Set<string>;
   pendingLobbyJoins: Set<string>;
-  pendingSprouts: Set<string>;
+  pendingReveals: Set<string>;
   pendingSeen: Set<string>;
   pendingCommands: Set<string>;
   lastSeenSentAt: Map<string, number>;
 };
 
-type SowsEarState = {
+type GameState = {
   context: AppContext;
   roomState: RoomState | undefined;
+  presence: RoomPresence[];
   rememberedRooms: RememberedRoom[];
   lastHandle: string;
-  runtime: SowsEarRuntime;
+  runtime: GameRuntime;
   error: string;
   copyStatus: "idle" | "copied" | "failed";
   pendingGuess: string;
+  pendingPassConfirm: boolean;
+  pendingVoidConfirm: boolean;
   focusTarget: string | undefined;
   helpOpen: boolean;
   now: number;
@@ -91,25 +94,25 @@ type SowsEarState = {
   leaveRoom(): void;
   claimHandle(handle: string): Promise<void>;
   switchHandle(): void;
-  createSeason(): Promise<void>;
-  joinSeason(): Promise<void>;
+  createGame(): Promise<void>;
+  joinGame(): Promise<void>;
   toggleReady(): Promise<void>;
-  startSeason(): Promise<void>;
+  startGame(): Promise<void>;
   moveSeat(handle: string, direction: "up" | "down"): Promise<void>;
   randomizeSeats(): Promise<void>;
-  pauseSeason(): Promise<void>;
-  resumeSeason(): Promise<void>;
-  voidHarvest(): Promise<void>;
+  pauseGame(): Promise<void>;
+  resumeGame(): Promise<void>;
+  voidRound(confirmed?: boolean): Promise<void>;
   transferHost(nextHost: string): Promise<void>;
   claimHost(): Promise<void>;
-  chooseField(fieldId: string): Promise<void>;
-  plantSeed(seed: string): Promise<void>;
-  plantLetters(letters: Map<number, string | ClueCellInput>): Promise<void>;
-  wait(): Promise<void>;
-  spoil(): Promise<void>;
+  chooseCategory(categoryId: string): Promise<void>;
+  submitAnswer(answer: string): Promise<void>;
+  submitLetters(letters: Map<number, string | ClueCellInput>): Promise<void>;
+  requestMoreLetters(): Promise<void>;
+  passRound(confirmed?: boolean): Promise<void>;
   submitGuess(guess: string, confirmed: boolean): Promise<void>;
-  adjudicate(accepted: boolean): Promise<void>;
-  advance(): Promise<void>;
+  judgeGuess(accepted: boolean): Promise<void>;
+  advanceRound(): Promise<void>;
   copySummary(): Promise<void>;
   reviewGame(gameId: string): void;
   leaveReview(): void;
@@ -120,42 +123,46 @@ type SowsEarState = {
   ensureHandleClaimed(): Promise<void>;
   ensureHandleSeen(force?: boolean): Promise<void>;
   ensureLobbyJoined(): Promise<void>;
-  ensureRowsSprouted(): Promise<void>;
+  ensureLettersRevealed(): Promise<void>;
 };
 
-const APP_STORAGE_KEY = "sowsear:app";
+const APP_STORAGE_KEY = "cowslip:app";
 const PRESENCE_HEARTBEAT_MS = 15000;
 const PRESENCE_ONLINE_MS = 45000;
 type PenStyle = {
   index: number;
 };
 
-function createRuntime(): SowsEarRuntime {
+function createRuntime(): GameRuntime {
   return {
     eventStore: createEventStore(),
     unsubscribeEvents: undefined,
+    unsubscribePresence: undefined,
     seenInterval: undefined,
     copyResetTimer: undefined,
     pendingClaims: new Set(),
     pendingLobbyJoins: new Set(),
-    pendingSprouts: new Set(),
+    pendingReveals: new Set(),
     pendingSeen: new Set(),
     pendingCommands: new Set(),
     lastSeenSentAt: new Map(),
   };
 }
 
-const useSowsEarStore = create<SowsEarState>()(persist((set, get) => {
+const useGameStore = create<GameState>()(persist((set, get) => {
   const runtime = createRuntime();
   return {
   context: { roomSlug: "", handle: "" },
   roomState: undefined,
+  presence: [],
   rememberedRooms: [],
   lastHandle: "",
   runtime,
   error: "",
   copyStatus: "idle",
   pendingGuess: "",
+  pendingPassConfirm: false,
+  pendingVoidConfirm: false,
   focusTarget: undefined,
   helpOpen: false,
   now: Date.now(),
@@ -169,6 +176,8 @@ const useSowsEarStore = create<SowsEarState>()(persist((set, get) => {
     const runtime = get().runtime;
     runtime.unsubscribeEvents?.();
     runtime.unsubscribeEvents = undefined;
+    runtime.unsubscribePresence?.();
+    runtime.unsubscribePresence = undefined;
     if (runtime.seenInterval) window.clearInterval(runtime.seenInterval);
     runtime.seenInterval = undefined;
     if (runtime.copyResetTimer) window.clearTimeout(runtime.copyResetTimer);
@@ -183,9 +192,11 @@ const useSowsEarStore = create<SowsEarState>()(persist((set, get) => {
     const runtime = get().runtime;
     runtime.unsubscribeEvents?.();
     runtime.unsubscribeEvents = undefined;
+    runtime.unsubscribePresence?.();
+    runtime.unsubscribePresence = undefined;
     if (runtime.seenInterval) window.clearInterval(runtime.seenInterval);
     runtime.seenInterval = undefined;
-    set({ context: next, roomState: undefined, error: "", pendingGuess: "", now: Date.now() });
+    set({ context: next, roomState: undefined, presence: [], error: "", pendingGuess: "", pendingPassConfirm: false, pendingVoidConfirm: false, now: Date.now() });
 
     if (!next.roomSlug) return;
     get().rememberRoom(next.roomSlug, next.handle);
@@ -195,7 +206,10 @@ const useSowsEarStore = create<SowsEarState>()(persist((set, get) => {
       void get().ensureHandleClaimed();
       void get().ensureHandleSeen();
       void get().ensureLobbyJoined();
-      void get().ensureRowsSprouted();
+      void get().ensureLettersRevealed();
+    });
+    runtime.unsubscribePresence = runtime.eventStore.subscribePresence(next.roomSlug, (presence) => {
+      set({ presence, now: Date.now() });
     });
     runtime.seenInterval = window.setInterval(() => {
       void get().ensureHandleSeen(true);
@@ -257,12 +271,12 @@ const useSowsEarStore = create<SowsEarState>()(persist((set, get) => {
     set({ context: { roomSlug: context.roomSlug, handle: "" }, lastHandle: "", error: "" });
   },
 
-  async createSeason() {
-    await dispatchOnce("create-season", () => commandCreateSeason(requiredRoomState(get), get().context.handle), set, get);
+  async createGame() {
+    await dispatchOnce("create-game", () => commandCreateGame(requiredRoomState(get), get().context.handle), set, get);
   },
 
-  async joinSeason() {
-    await dispatchOnce("join-season", () => commandJoinSeason(requiredRoomState(get), get().context.handle), set, get);
+  async joinGame() {
+    await dispatchOnce("join-game", () => commandJoinGame(requiredRoomState(get), get().context.handle), set, get);
   },
 
   async toggleReady() {
@@ -274,8 +288,8 @@ const useSowsEarStore = create<SowsEarState>()(persist((set, get) => {
     }, set, get);
   },
 
-  async startSeason() {
-    await dispatchOnce("start-season", () => commandStartSeason(requiredRoomState(get), get().context.handle), set, get);
+  async startGame() {
+    await dispatchOnce("start-game", () => commandStartGame(requiredRoomState(get), get().context.handle), set, get);
   },
 
   async moveSeat(handle, direction) {
@@ -286,16 +300,21 @@ const useSowsEarStore = create<SowsEarState>()(persist((set, get) => {
     await dispatchOnce("randomize-seats", () => commandRandomizeSeats(requiredRoomState(get), get().context.handle), set, get);
   },
 
-  async pauseSeason() {
-    await dispatchOnce("pause-season", () => commandPauseSeason(requiredRoomState(get), get().context.handle), set, get);
+  async pauseGame() {
+    await dispatchOnce("pause-game", () => commandPauseGame(requiredRoomState(get), get().context.handle), set, get);
   },
 
-  async resumeSeason() {
-    await dispatchOnce("resume-season", () => commandResumeSeason(requiredRoomState(get), get().context.handle), set, get);
+  async resumeGame() {
+    await dispatchOnce("resume-game", () => commandResumeGame(requiredRoomState(get), get().context.handle), set, get);
   },
 
-  async voidHarvest() {
-    await dispatchOnce("void-harvest", () => commandVoidHarvest(requiredRoomState(get), get().context.handle), set, get);
+  async voidRound(confirmed = false) {
+    if (!confirmed) {
+      set({ pendingVoidConfirm: true, focusTarget: "confirm-void-round" });
+      return;
+    }
+    set({ pendingVoidConfirm: false });
+    await dispatchOnce("void-round", () => commandVoidRound(requiredRoomState(get), get().context.handle), set, get);
   },
 
   async transferHost(nextHost) {
@@ -306,49 +325,54 @@ const useSowsEarStore = create<SowsEarState>()(persist((set, get) => {
     await dispatchOnce("claim-host", () => commandClaimHost(requiredRoomState(get), get().context.handle), set, get);
   },
 
-  async chooseField(fieldId) {
-    await dispatchOnce(`choose-field:${fieldId}`, () => commandChooseField(requiredRoomState(get), get().context.handle, fieldId), set, get);
+  async chooseCategory(categoryId) {
+    await dispatchOnce(`choose-category:${categoryId}`, () => commandChooseCategory(requiredRoomState(get), get().context.handle, categoryId), set, get);
   },
 
-  async plantSeed(seed) {
-    await dispatchOnce("seed", () => commandPlantSeed(requiredRoomState(get), get().context.handle, seed), set, get);
+  async submitAnswer(answer) {
+    await dispatchOnce("answer-entry", () => commandSubmitAnswer(requiredRoomState(get), get().context.handle, answer), set, get);
   },
 
-  async plantLetters(letters) {
-    await dispatchOnce("letters", () => commandPlantLetters(requiredRoomState(get), get().context.handle, letters), set, get);
+  async submitLetters(letters) {
+    await dispatchOnce("letters", () => commandSubmitLetters(requiredRoomState(get), get().context.handle, letters), set, get);
   },
 
-  async wait() {
-    await dispatchOnce("wait", () => commandWait(requiredRoomState(get), get().context.handle), set, get);
+  async requestMoreLetters() {
+    await dispatchOnce("request-more-letters", () => commandRequestMoreLetters(requiredRoomState(get), get().context.handle), set, get);
   },
 
-  async spoil() {
-    await dispatchOnce("spoil", () => commandSpoil(requiredRoomState(get), get().context.handle), set, get);
+  async passRound(confirmed = false) {
+    if (!confirmed) {
+      set({ pendingPassConfirm: true, focusTarget: "confirm-pass-round" });
+      return;
+    }
+    set({ pendingPassConfirm: false });
+    await dispatchOnce("pass-round", () => commandPassRound(requiredRoomState(get), get().context.handle), set, get);
   },
 
   async submitGuess(guess, confirmed) {
     if (!confirmed) {
-      set({ pendingGuess: guess, focusTarget: "confirm-guess" });
+      set({ pendingGuess: guess, pendingPassConfirm: false, focusTarget: "confirm-guess" });
       return;
     }
     const pendingGuess = get().pendingGuess;
-    set({ pendingGuess: "" });
+    set({ pendingGuess: "", pendingPassConfirm: false });
     await dispatchOnce("guess", () => commandGuess(requiredRoomState(get), get().context.handle, pendingGuess || guess), set, get);
   },
 
-  async adjudicate(accepted) {
-    await dispatchOnce(`adjudicate:${accepted}`, () => commandAdjudicate(requiredRoomState(get), get().context.handle, accepted), set, get);
+  async judgeGuess(accepted) {
+    await dispatchOnce(`judge-guess:${accepted}`, () => commandJudgeGuess(requiredRoomState(get), get().context.handle, accepted), set, get);
   },
 
-  async advance() {
-    await dispatchOnce("advance", () => commandAdvanceAfterRecap(requiredRoomState(get), get().context.handle), set, get);
+  async advanceRound() {
+    await dispatchOnce("advance-round", () => commandAdvanceRound(requiredRoomState(get), get().context.handle), set, get);
   },
 
   async copySummary() {
     const game = activeGame(requiredRoomState(get));
     if (!game) return;
     try {
-      await navigator.clipboard?.writeText(seasonSummary(game));
+      await navigator.clipboard?.writeText(gameSummary(game));
       set({ error: "Summary copied." });
     } catch {
       set({ error: "Summary is ready to copy." });
@@ -413,12 +437,15 @@ const useSowsEarStore = create<SowsEarState>()(persist((set, get) => {
     const now = Date.now();
     const lastSent = runtime.lastSeenSentAt.get(key) ?? 0;
     if (!force && now - lastSent < PRESENCE_HEARTBEAT_MS) return;
-    const result = commandMarkHandleSeen(roomState, context.handle);
-    if (!result.ok || !result.events.length) return;
     runtime.pendingSeen.add(key);
     runtime.lastSeenSentAt.set(key, now);
     try {
-      await runtime.eventStore.append(result.events);
+      await runtime.eventStore.markSeen({
+        roomSlug: context.roomSlug,
+        handle: context.handle,
+        normalizedHandle,
+        displayName: context.handle,
+      });
     } finally {
       runtime.pendingSeen.delete(key);
     }
@@ -433,7 +460,7 @@ const useSowsEarStore = create<SowsEarState>()(persist((set, get) => {
     if (playerForGame(game, context.handle)) return;
     const key = `${game.id}:${normalizeHandle(context.handle)}`;
     if (runtime.pendingLobbyJoins.has(key)) return;
-    const result = commandJoinSeason(roomState, context.handle);
+    const result = commandJoinGame(roomState, context.handle);
     if (!result.ok) {
       set({ error: result.error });
       return;
@@ -447,22 +474,22 @@ const useSowsEarStore = create<SowsEarState>()(persist((set, get) => {
     }
   },
 
-  async ensureRowsSprouted() {
+  async ensureLettersRevealed() {
     const { context, roomState } = get();
     if (!roomState || !context.handle) return;
     const runtime = get().runtime;
     const game = activeGame(roomState);
     const round = game ? currentRound(game) : undefined;
-    if (!game || !round || round.phase !== "planting") return;
+    if (!game || !round || round.phase !== "letter-entry") return;
     const key = `${game.id}:${round.id}:${round.depth}:${game.phaseVersion}`;
-    if (runtime.pendingSprouts.has(key)) return;
-    const result = commandTrySprout(roomState, context.handle);
+    if (runtime.pendingReveals.has(key)) return;
+    const result = commandTryRevealLetters(roomState, context.handle);
     if (!result.ok || !result.events.length) return;
-    runtime.pendingSprouts.add(key);
+    runtime.pendingReveals.add(key);
     try {
       await runtime.eventStore.append(result.events);
     } finally {
-      runtime.pendingSprouts.delete(key);
+      runtime.pendingReveals.delete(key);
     }
   },
   };
@@ -475,13 +502,13 @@ const useSowsEarStore = create<SowsEarState>()(persist((set, get) => {
   }),
 }));
 
-function SowsEarApp(): React.ReactElement {
-  const context = useSowsEarStore((state) => state.context);
-  const roomState = useSowsEarStore((state) => state.roomState);
-  const error = useSowsEarStore((state) => state.error);
-  const initialize = useSowsEarStore((state) => state.initialize);
-  const shutdown = useSowsEarStore((state) => state.shutdown);
-  const syncFromLocation = useSowsEarStore((state) => state.syncFromLocation);
+function CowslipApp(): React.ReactElement {
+  const context = useGameStore((state) => state.context);
+  const roomState = useGameStore((state) => state.roomState);
+  const error = useGameStore((state) => state.error);
+  const initialize = useGameStore((state) => state.initialize);
+  const shutdown = useGameStore((state) => state.shutdown);
+  const syncFromLocation = useGameStore((state) => state.syncFromLocation);
 
   useEffect(() => {
     initialize();
@@ -535,12 +562,12 @@ function SowsEarApp(): React.ReactElement {
 }
 
 function Shell({ hideHeaderBrand }: { hideHeaderBrand?: boolean }): React.ReactElement {
-  const context = useSowsEarStore((state) => state.context);
-  const openHelp = useSowsEarStore((state) => state.openHelp);
-  const copyRoom = useSowsEarStore((state) => state.copyRoom);
-  const leaveRoom = useSowsEarStore((state) => state.leaveRoom);
-  const switchHandle = useSowsEarStore((state) => state.switchHandle);
-  const copyStatus = useSowsEarStore((state) => state.copyStatus);
+  const context = useGameStore((state) => state.context);
+  const openHelp = useGameStore((state) => state.openHelp);
+  const copyRoom = useGameStore((state) => state.copyRoom);
+  const leaveRoom = useGameStore((state) => state.leaveRoom);
+  const switchHandle = useGameStore((state) => state.switchHandle);
+  const copyStatus = useGameStore((state) => state.copyStatus);
   const hasRoomContext = Boolean(context.roomSlug || context.handle);
   return (
     <header className={`topbar ${hideHeaderBrand ? "topbar-minimal" : ""}`}>
@@ -611,8 +638,8 @@ function TopbarChip({ label, value, className = "" }: { label: string; value: st
 }
 
 function HelpDialog(): React.ReactElement {
-  const helpOpen = useSowsEarStore((state) => state.helpOpen);
-  const closeHelp = useSowsEarStore((state) => state.closeHelp);
+  const helpOpen = useGameStore((state) => state.helpOpen);
+  const closeHelp = useGameStore((state) => state.closeHelp);
   const dialogRef = useRef<HTMLDialogElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
 
@@ -654,15 +681,15 @@ function HelpDialog(): React.ReactElement {
         <div className="help-content">
           <section>
             <h2>Goal</h2>
-            <p>Work together to help the guesser name the picker&apos;s answer from a category and a few clue cells.</p>
+            <p>Work together to help the guesser name the answer writer&apos;s answer from a category and a few clue cells.</p>
           </section>
           <section>
             <h2>Roles</h2>
-            <p>The guesser sees the category and makes the guess. The picker enters the answer. Every non-guesser adds one letter to each row they hold.</p>
+            <p>The guesser sees the category and makes the guess. The answer writer enters the answer. Every non-guesser adds one letter to each row they hold.</p>
           </section>
           <section>
             <h2>Round</h2>
-            <p>Each row can grow to five cells. A cluer may mark the current cell with a period to end that row. The guesser may guess after each reveal, ask for one more cell, or pass.</p>
+            <p>Each row can grow to five cells. A clue giver may add a period after a letter to split words. The next clue giver continues in the same row.</p>
           </section>
           <section>
             <h2>Scoring</h2>
@@ -679,9 +706,9 @@ function HelpDialog(): React.ReactElement {
 }
 
 function RoomEntry(): React.ReactElement {
-  const setUrl = useSowsEarStore((state) => state.setUrl);
-  const openRoom = useSowsEarStore((state) => state.openRoom);
-  const rememberedRooms = useSowsEarStore((state) => state.rememberedRooms);
+  const setUrl = useGameStore((state) => state.setUrl);
+  const openRoom = useGameStore((state) => state.openRoom);
+  const rememberedRooms = useGameStore((state) => state.rememberedRooms);
   return (
     <section className="hero">
       <div className="plain-lockup">
@@ -704,7 +731,7 @@ function RoomEntry(): React.ReactElement {
           }}
         >
           <h2 className="card-title">Room</h2>
-          <label className="field-control">
+          <label className="form-control">
             <span className="sr-only">Room</span>
             <input name="room" autoComplete="off" placeholder="room-name" required data-testid="room-input" />
           </label>
@@ -733,7 +760,7 @@ function RoomEntry(): React.ReactElement {
 }
 
 function HandleClaim(): React.ReactElement {
-  const claimHandle = useSowsEarStore((state) => state.claimHandle);
+  const claimHandle = useGameStore((state) => state.claimHandle);
   return (
     <section className="handle-page">
       <div className="paper-panel handle-panel">
@@ -758,14 +785,14 @@ function HandleClaim(): React.ReactElement {
 }
 
 function RoomHome(): React.ReactElement {
-  const createSeason = useSowsEarStore((state) => state.createSeason);
+  const createGame = useGameStore((state) => state.createGame);
   return (
     <section className="room-grid">
       <div className="paper-panel">
         <h1>Start a Game</h1>
         <p className="subtle">Create a new game, or review an earlier one.</p>
         <div className="action-row">
-          <button type="button" className="button primary" onClick={() => void createSeason()} data-testid="create-season">
+          <button type="button" className="button primary" onClick={() => void createGame()} data-testid="create-game">
             Start Game
           </button>
         </div>
@@ -776,8 +803,8 @@ function RoomHome(): React.ReactElement {
 }
 
 function GameView({ game }: { game: Game }): React.ReactElement {
-  const context = useSowsEarStore((state) => state.context);
-  const resumeSeason = useSowsEarStore((state) => state.resumeSeason);
+  const context = useGameStore((state) => state.context);
+  const resumeGame = useGameStore((state) => state.resumeGame);
   if (game.status === "lobby") return <Lobby game={game} />;
   if (game.phase === "final") return <Final game={game} />;
   const round = currentRound(game);
@@ -793,7 +820,7 @@ function GameView({ game }: { game: Game }): React.ReactElement {
             <h1>Game Paused</h1>
             <p className="subtle">The host paused this game. Current round state is preserved.</p>
             {normalizeHandle(game.hostHandle) === normalizeHandle(context.handle) ? (
-              <button type="button" className="button primary" onClick={() => void resumeSeason()} data-testid="resume-season">
+              <button type="button" className="button primary" onClick={() => void resumeGame()} data-testid="resume-game">
                 Resume
               </button>
             ) : null}
@@ -813,20 +840,22 @@ function GameView({ game }: { game: Game }): React.ReactElement {
 }
 
 function Lobby({ game }: { game: Game }): React.ReactElement {
-  const context = useSowsEarStore((state) => state.context);
-  const roomState = useSowsEarStore((state) => state.roomState);
-  const now = useSowsEarStore((state) => state.now);
-  const joinSeason = useSowsEarStore((state) => state.joinSeason);
-  const toggleReady = useSowsEarStore((state) => state.toggleReady);
-  const startSeason = useSowsEarStore((state) => state.startSeason);
-  const claimHost = useSowsEarStore((state) => state.claimHost);
-  const randomizeSeats = useSowsEarStore((state) => state.randomizeSeats);
-  const moveSeat = useSowsEarStore((state) => state.moveSeat);
-  const transferHost = useSowsEarStore((state) => state.transferHost);
+  const context = useGameStore((state) => state.context);
+  const roomState = useGameStore((state) => state.roomState);
+  const presence = useGameStore((state) => state.presence);
+  const now = useGameStore((state) => state.now);
+  const joinGame = useGameStore((state) => state.joinGame);
+  const toggleReady = useGameStore((state) => state.toggleReady);
+  const startGame = useGameStore((state) => state.startGame);
+  const claimHost = useGameStore((state) => state.claimHost);
+  const randomizeSeats = useGameStore((state) => state.randomizeSeats);
+  const moveSeat = useGameStore((state) => state.moveSeat);
+  const transferHost = useGameStore((state) => state.transferHost);
   const me = game.players.find((player) => player.normalizedHandle === normalizeHandle(context.handle));
   const isHost = normalizeHandle(game.hostHandle) === normalizeHandle(context.handle);
   const readyCount = game.players.filter((player) => player.ready).length;
   const canStart = readyCount >= 3 && readyCount <= 8;
+  const rolePreview = canStart ? lobbyRolePreview(game) : "";
 
   return (
     <section className="room-grid">
@@ -834,9 +863,10 @@ function Lobby({ game }: { game: Game }): React.ReactElement {
         <p className="eyebrow">Game Lobby</p>
         <h1>{context.roomSlug}</h1>
         <p className="subtle">{readyCount} ready. Start needs 3-8 ready players.</p>
+        {rolePreview ? <p className="role-preview" data-testid="role-preview">{rolePreview}</p> : null}
         <div className="rules-summary" data-testid="rules-summary">
           <p>
-            <strong>Category pack:</strong> Starter Categories ({STARTER_FIELDS.length})
+            <strong>Category pack:</strong> Starter Categories ({STARTER_CATEGORIES.length})
           </p>
           <p>
             <strong>Rules:</strong> 3-8 players, five cells max, points 20/10/7/5/3, final score uses the best five rounds.
@@ -848,16 +878,16 @@ function Lobby({ game }: { game: Game }): React.ReactElement {
               {me.ready ? "Not Ready" : "Ready"}
             </button>
           ) : (
-            <button type="button" className="button primary" onClick={() => void joinSeason()} data-testid="join-season">
+            <button type="button" className="button primary" onClick={() => void joinGame()} data-testid="join-game">
               Join Game
             </button>
           )}
           {isHost ? (
-            <button type="button" className="button primary" onClick={() => void startSeason()} data-testid="start-season" disabled={!canStart} aria-disabled={!canStart}>
+            <button type="button" className="button primary" onClick={() => void startGame()} data-testid="start-game" disabled={!canStart} aria-disabled={!canStart}>
               Start Game
             </button>
           ) : null}
-          {!isHost && me && !isHandleOnline(game.hostHandle, context, roomState, now) ? (
+          {!isHost && me && !isHandleOnline(game.hostHandle, context, presence, now) ? (
             <button type="button" className="button secondary" onClick={() => void claimHost()} data-testid="claim-host">
               Take Host
             </button>
@@ -868,7 +898,7 @@ function Lobby({ game }: { game: Game }): React.ReactElement {
         <h2>Seats</h2>
         <ol className="seat-list">
           {[...game.players].sort((a, b) => a.seatNumber - b.seatNumber).map((player) => {
-            const online = isHandleOnline(player.handle, context, roomState, now);
+            const online = isHandleOnline(player.handle, context, presence, now);
             return (
               <li key={player.handle} data-testid={`seat-${player.handle}`} data-presence={online ? "online" : "offline"}>
                 <span data-testid="seat-name">{player.displayName}</span>
@@ -909,18 +939,18 @@ function Lobby({ game }: { game: Game }): React.ReactElement {
 }
 
 function StatusRail({ game, round, role }: { game: Game; round: Round; role: string }): React.ReactElement {
-  const context = useSowsEarStore((state) => state.context);
-  const score = game.ribbons.reduce((sum, value) => sum + value, 0);
+  const context = useGameStore((state) => state.context);
+  const score = game.roundPoints.reduce((sum, value) => sum + value, 0);
   const currentPoints = pointsForDepth(true, round.depth);
   return (
     <aside className="status-rail">
       <div className="paper-panel status-card">
         <div className="status-card-header">
-          <p className="eyebrow">Round {round.roundNumber} of {game.totalHarvests}</p>
+          <p className="eyebrow">Round {round.roundNumber} of {game.totalRounds}</p>
         </div>
         <div className="status-card-body">
           <div className="role-summary">
-            <h2>{role === "none" ? "Observer" : titleCase(role)}</h2>
+            <h2>{roleLabel(role)}</h2>
             <p>{context.handle}</p>
           </div>
           <div className="score-inline">
@@ -929,8 +959,8 @@ function StatusRail({ game, round, role }: { game: Game; round: Round; role: str
           </div>
         </div>
       </div>
-      <div className="paper-panel ribbon-ladder" aria-label="Point ladder">
-        <div className="ribbon-ladder-heading">
+      <div className="paper-panel points-ladder" aria-label="Point ladder">
+        <div className="points-ladder-heading">
           <span>Point Ladder</span>
           <strong>Current {currentPoints}</strong>
         </div>
@@ -949,55 +979,65 @@ function StatusRail({ game, round, role }: { game: Game; round: Round; role: str
 }
 
 function HostControls({ game }: { game: Game }): React.ReactElement | null {
-  const context = useSowsEarStore((state) => state.context);
-  const pauseSeason = useSowsEarStore((state) => state.pauseSeason);
-  const resumeSeason = useSowsEarStore((state) => state.resumeSeason);
-  const voidHarvest = useSowsEarStore((state) => state.voidHarvest);
-  const transferHost = useSowsEarStore((state) => state.transferHost);
+  const context = useGameStore((state) => state.context);
+  const pauseGame = useGameStore((state) => state.pauseGame);
+  const resumeGame = useGameStore((state) => state.resumeGame);
+  const voidRound = useGameStore((state) => state.voidRound);
+  const transferHost = useGameStore((state) => state.transferHost);
+  const pendingVoidConfirm = useGameStore((state) => state.pendingVoidConfirm);
   const selectRef = useRef<HTMLSelectElement>(null);
   if (normalizeHandle(game.hostHandle) !== normalizeHandle(context.handle)) return null;
   return (
-    <div className="paper-panel host-controls">
-      <h2>You're Host</h2>
-      <div className="action-row">
-        {game.pausedAt ? (
-          <button type="button" className="button primary" onClick={() => void resumeSeason()} data-testid="resume-season">
-            Resume
+    <details className="paper-panel host-controls" data-testid="host-controls">
+      <summary>Host Options</summary>
+      <div className="host-controls-body">
+        <div className="action-row">
+          {game.pausedAt ? (
+            <button type="button" className="button primary" onClick={() => void resumeGame()} data-testid="resume-game">
+              Resume
+            </button>
+          ) : (
+            <button type="button" className="button secondary" onClick={() => void pauseGame()} data-testid="pause-game">
+              Pause
+            </button>
+          )}
+          <button
+            type="button"
+            className="button danger"
+            onClick={() => void voidRound(pendingVoidConfirm)}
+            data-testid={pendingVoidConfirm ? "confirm-void-round" : "void-round"}
+          >
+            {pendingVoidConfirm ? "Confirm Void Round" : "Void Round"}
           </button>
-        ) : (
-          <button type="button" className="button secondary" onClick={() => void pauseSeason()} data-testid="pause-season">
-            Pause
-          </button>
-        )}
-        <button type="button" className="button danger" onClick={() => void voidHarvest()} data-testid="void-harvest">
-          Void Round
+        </div>
+        {pendingVoidConfirm ? <p className="hint">This cancels the current round and records 0 points.</p> : null}
+        <label>
+          Transfer Host
+          <select ref={selectRef} data-testid="host-transfer-select" defaultValue={game.hostHandle}>
+            {game.players.map((player) => (
+              <option key={player.handle} value={player.handle}>
+                {player.displayName}
+              </option>
+            ))}
+          </select>
+        </label>
+        <button type="button" className="button" onClick={() => void transferHost(selectRef.current?.value ?? game.hostHandle)} data-testid="transfer-host-selected">
+          Transfer
         </button>
       </div>
-      <label>
-        Transfer Host
-        <select ref={selectRef} data-testid="host-transfer-select" defaultValue={game.hostHandle}>
-          {game.players.map((player) => (
-            <option key={player.handle} value={player.handle}>
-              {player.displayName}
-            </option>
-          ))}
-        </select>
-      </label>
-      <button type="button" className="button" onClick={() => void transferHost(selectRef.current?.value ?? game.hostHandle)} data-testid="transfer-host-selected">
-        Transfer
-      </button>
-    </div>
+    </details>
   );
 }
 
 function HostRecoveryControls({ game }: { game: Game }): React.ReactElement | null {
-  const context = useSowsEarStore((state) => state.context);
-  const roomState = useSowsEarStore((state) => state.roomState);
-  const now = useSowsEarStore((state) => state.now);
-  const claimHost = useSowsEarStore((state) => state.claimHost);
+  const context = useGameStore((state) => state.context);
+  const roomState = useGameStore((state) => state.roomState);
+  const presence = useGameStore((state) => state.presence);
+  const now = useGameStore((state) => state.now);
+  const claimHost = useGameStore((state) => state.claimHost);
   if (normalizeHandle(game.hostHandle) === normalizeHandle(context.handle)) return null;
   if (!playerForGame(game, context.handle)) return null;
-  if (isHandleOnline(game.hostHandle, context, roomState, now)) return null;
+  if (isHandleOnline(game.hostHandle, context, presence, now)) return null;
   return (
     <div className="paper-panel host-controls" data-testid="host-offline-panel">
       <h2>Host Offline</h2>
@@ -1010,42 +1050,43 @@ function HostRecoveryControls({ game }: { game: Game }): React.ReactElement | nu
 }
 
 function PhasePanel({ game, round, role }: { game: Game; round: Round; role: string }): React.ReactElement {
-  const fieldTitle = round.fieldLabel || "Category";
-  if (round.phase === "field-choice") {
-    if (role === "guesser") return <FieldChoice round={round} />;
+  const categoryTitle = round.categoryLabel || "Category";
+  if (round.phase === "category-choice") {
+    if (role === "guesser") return <CategoryChoice round={round} />;
     return <WaitPanel message="The guesser is choosing a category." />;
   }
-  if (round.phase === "seed") {
-    if (role === "picker") return <AnswerPanel fieldTitle={fieldTitle} />;
+  if (round.phase === "answer-entry") {
+    if (role === "answerWriter") return <AnswerPanel categoryTitle={categoryTitle} />;
     return (
       <section className="paper-panel wait-panel">
         <p className="eyebrow">Category</p>
         <div className="phase-title-row">
           <div>
-            <h1>{fieldTitle}</h1>
-            <p className="subtle">The picker is choosing the answer.</p>
+            <h1>{categoryTitle}</h1>
+            <p className="subtle">The answer writer is choosing the answer.</p>
           </div>
         </div>
       </section>
     );
   }
-  if (round.phase === "planting") return <PlantingPanel game={game} round={round} role={role} fieldTitle={fieldTitle} />;
-  if (round.phase === "farmer-call") return <GuesserCallPanel game={game} round={round} role={role} fieldTitle={fieldTitle} />;
-  if (round.phase === "adjudication") return <AdjudicationPanel game={game} round={round} role={role} fieldTitle={fieldTitle} />;
+  if (round.phase === "letter-entry") return <LetterEntryPanel game={game} round={round} role={role} categoryTitle={categoryTitle} />;
+  if (round.phase === "guesser-call") return <GuesserCallPanel game={game} round={round} role={role} categoryTitle={categoryTitle} />;
+  if (round.phase === "guess-judging") return <GuessJudgingPanel game={game} round={round} role={role} categoryTitle={categoryTitle} />;
   return <RoundRecap game={game} round={round} />;
 }
 
-function FieldChoice({ round }: { round: Round }): React.ReactElement {
-  const chooseField = useSowsEarStore((state) => state.chooseField);
+function CategoryChoice({ round }: { round: Round }): React.ReactElement {
+  const chooseCategory = useGameStore((state) => state.chooseCategory);
   return (
     <section className="paper-panel">
       <p className="eyebrow">Choose a Category</p>
-      <h1>Pick the search space</h1>
-      <div className="field-options">
-        {round.fieldOptions.map((fieldId) => (
-          <button type="button" key={fieldId} className="field-card" onClick={() => void chooseField(fieldId)} data-testid="field-option">
+      <h1>You are the guesser</h1>
+      <p className="subtle">Choose a category. The answer writer will pick an answer inside it.</p>
+      <div className="category-options">
+        {round.categoryOptions.map((categoryId) => (
+          <button type="button" key={categoryId} className="category-card" onClick={() => void chooseCategory(categoryId)} data-testid="category-option">
             <span>Category</span>
-            <strong>{fieldLabel(fieldId)}</strong>
+            <strong>{categoryLabel(categoryId)}</strong>
           </button>
         ))}
       </div>
@@ -1053,36 +1094,37 @@ function FieldChoice({ round }: { round: Round }): React.ReactElement {
   );
 }
 
-function AnswerPanel({ fieldTitle }: { fieldTitle: string }): React.ReactElement {
-  const plantSeed = useSowsEarStore((state) => state.plantSeed);
+function AnswerPanel({ categoryTitle }: { categoryTitle: string }): React.ReactElement {
+  const submitAnswer = useGameStore((state) => state.submitAnswer);
   return (
     <section className="paper-panel">
       <p className="eyebrow">Category</p>
-      <h1>{fieldTitle}</h1>
+      <h1>{categoryTitle}</h1>
+      <p className="subtle">You are the answer writer. Enter the answer the group will try to guess.</p>
       <form
         className="compact-form"
         onSubmit={(event) => {
           event.preventDefault();
-          void plantSeed(formValue(event.currentTarget, "seed"));
+          void submitAnswer(formValue(event.currentTarget, "answer-entry"));
         }}
       >
         <label>
           Answer
-          <input name="seed" autoComplete="off" maxLength={80} required data-testid="seed-input" />
+          <input name="answer-entry" autoComplete="off" maxLength={80} required data-testid="answer-input" />
         </label>
         <p className="hint">Long phrases and obscure proper nouns are hard to clue fairly.</p>
-        <button type="submit" className="button primary" data-testid="plant-seed">
-          Lock Answer
+        <button type="submit" className="button primary" data-testid="submit-answer">
+          Submit Answer
         </button>
       </form>
     </section>
   );
 }
 
-function PlantingPanel({ game, round, role, fieldTitle }: { game: Game; round: Round; role: string; fieldTitle: string }): React.ReactElement {
-  const context = useSowsEarStore((state) => state.context);
-  const plantLetters = useSowsEarStore((state) => state.plantLetters);
-  const heldRows = rowsHeldForClue(round, context.handle);
+function LetterEntryPanel({ game, round, role, categoryTitle }: { game: Game; round: Round; role: string; categoryTitle: string }): React.ReactElement {
+  const context = useGameStore((state) => state.context);
+  const submitLetters = useGameStore((state) => state.submitLetters);
+  const heldRows = rowsHeldByClueGiver(round, context.handle);
   const submittedCurrentDepth = round.entries.some((entry) => entry.depth === round.depth && sameHandle(entry.handle, context.handle));
   const rows = (
     <Rows
@@ -1091,26 +1133,26 @@ function PlantingPanel({ game, round, role, fieldTitle }: { game: Game; round: R
       revealAll={false}
       viewerHandle={context.handle}
       editableRows={heldRows}
-      showPlantingState={true}
+      showLetterEntryState={true}
     />
   );
   return (
     <section className="paper-panel board-panel">
       <p className="eyebrow">Category</p>
-      <h1>{fieldTitle}</h1>
+      <h1>{categoryTitle}</h1>
       {role === "guesser" ? null : (
-        <p className="seed-line">
-          Answer: <strong>{round.seedRaw}</strong>
+        <p className="answer-line">
+          Answer: <strong>{round.answerRaw}</strong>
         </p>
       )}
       <p className="subtle">
         {role === "guesser"
-          ? "The cluers are adding letters."
+          ? "The clue givers are adding letters."
           : heldRows.length
-            ? "Plant one letter in each row you hold."
+            ? "Add letters or skip. Use . for a word break."
             : submittedCurrentDepth
-              ? "Submitted. Waiting for the other cluers."
-              : "Waiting for the other cluers."}
+              ? "Submitted. Waiting for the other clue givers."
+              : "Waiting for the other clue givers."}
       </p>
       {heldRows.length ? (
         <form
@@ -1132,7 +1174,7 @@ function PlantingPanel({ game, round, role, fieldTitle }: { game: Game; round: R
                 .filter((cell) => cell.depth > 0 && cell.letter);
               if (cells.length) letters.set(row.rowIndex, { cells, endsWord });
             }
-            void plantLetters(letters);
+            void submitLetters(letters);
           }}
         >
           {rows}
@@ -1147,17 +1189,19 @@ function PlantingPanel({ game, round, role, fieldTitle }: { game: Game; round: R
   );
 }
 
-function GuesserCallPanel({ game, round, role, fieldTitle }: { game: Game; round: Round; role: string; fieldTitle: string }): React.ReactElement {
-  const pendingGuess = useSowsEarStore((state) => state.pendingGuess);
-  const submitGuess = useSowsEarStore((state) => state.submitGuess);
-  const wait = useSowsEarStore((state) => state.wait);
-  const spoil = useSowsEarStore((state) => state.spoil);
+function GuesserCallPanel({ game, round, role, categoryTitle }: { game: Game; round: Round; role: string; categoryTitle: string }): React.ReactElement {
+  const pendingGuess = useGameStore((state) => state.pendingGuess);
+  const submitGuess = useGameStore((state) => state.submitGuess);
+  const requestMoreLetters = useGameStore((state) => state.requestMoreLetters);
+  const passRound = useGameStore((state) => state.passRound);
+  const pendingPassConfirm = useGameStore((state) => state.pendingPassConfirm);
+  const currentPoints = pointsForDepth(true, round.depth);
   return (
     <section className="paper-panel board-panel">
       <p className="eyebrow">Category</p>
-      <h1>{fieldTitle}</h1>
-      <p className="ribbon-callout" data-testid="current-ribbon">
-        Current Points: {pointsForDepth(true, round.depth)}
+      <h1>{categoryTitle}</h1>
+      <p className="points-callout" data-testid="current-points">
+        Guess now for {currentPoints} points.
       </p>
       <Rows game={game} round={round} revealAll={false} />
       {role === "guesser" ? (
@@ -1176,7 +1220,7 @@ function GuesserCallPanel({ game, round, role, fieldTitle }: { game: Game; round
             {pendingGuess ? (
               <>
                 <p className="hint" data-testid="guess-confirmation">
-                  Submitting ends the round if it is not accepted.
+                  Final guess. If it is wrong, this round scores 0.
                 </p>
                 <input type="hidden" name="confirmed" value="true" />
                 <button className="button primary" type="submit" data-testid="confirm-guess">
@@ -1191,19 +1235,25 @@ function GuesserCallPanel({ game, round, role, fieldTitle }: { game: Game; round
           </form>
           <div className="action-row">
             {round.depth < 5 ? (
-              <button type="button" className="button secondary" onClick={() => void wait()} data-testid="one-more-letter">
-                One More Cell
+              <button type="button" className="button secondary" onClick={() => void requestMoreLetters()} data-testid="one-more-letter">
+                Reveal One More Letter
               </button>
             ) : null}
-            <button type="button" className="button danger" onClick={() => void spoil()} data-testid="spoil">
-              Pass
+            <button
+              type="button"
+              className="button danger"
+              onClick={() => void passRound(pendingPassConfirm)}
+              data-testid={pendingPassConfirm ? "confirm-pass-round" : "pass-round"}
+            >
+              {pendingPassConfirm ? "Confirm Pass" : "Pass"}
             </button>
           </div>
+          {pendingPassConfirm ? <p className="hint">Passing ends this round with 0 points.</p> : null}
         </>
       ) : (
         <>
-          <p className="seed-line">
-            Answer: <strong>{round.seedRaw}</strong>
+          <p className="answer-line">
+            Answer: <strong>{round.answerRaw}</strong>
           </p>
           <p className="subtle">The guesser is deciding.</p>
         </>
@@ -1212,25 +1262,25 @@ function GuesserCallPanel({ game, round, role, fieldTitle }: { game: Game; round
   );
 }
 
-function AdjudicationPanel({ game, round, role, fieldTitle }: { game: Game; round: Round; role: string; fieldTitle: string }): React.ReactElement {
-  const adjudicate = useSowsEarStore((state) => state.adjudicate);
-  if (role === "picker") {
+function GuessJudgingPanel({ game, round, role, categoryTitle }: { game: Game; round: Round; role: string; categoryTitle: string }): React.ReactElement {
+  const judgeGuess = useGameStore((state) => state.judgeGuess);
+  if (role === "answerWriter") {
     return (
       <section className="paper-panel">
-        <p className="eyebrow">Adjudication</p>
-        <h1>Does this count?</h1>
+        <p className="eyebrow">Judge the Guess</p>
+        <h1>Accept this guess?</h1>
         <dl className="compare-list">
           <dt>Answer</dt>
-          <dd>{round.seedRaw}</dd>
+          <dd>{round.answerRaw}</dd>
           <dt>Guess</dt>
           <dd>{round.guessRaw}</dd>
         </dl>
         <div className="action-row">
-          <button type="button" className="button primary" onClick={() => void adjudicate(true)} data-testid="accept-guess">
-            Correct
+          <button type="button" className="button primary" onClick={() => void judgeGuess(true)} data-testid="accept-guess">
+            Accept
           </button>
-          <button type="button" className="button danger" onClick={() => void adjudicate(false)} data-testid="reject-guess">
-            Miss
+          <button type="button" className="button danger" onClick={() => void judgeGuess(false)} data-testid="reject-guess">
+            Reject
           </button>
         </div>
       </section>
@@ -1240,29 +1290,29 @@ function AdjudicationPanel({ game, round, role, fieldTitle }: { game: Game; roun
     return (
       <section className="paper-panel board-panel">
         <p className="eyebrow">Category</p>
-        <h1>{fieldTitle}</h1>
+        <h1>{categoryTitle}</h1>
         <Rows game={game} round={round} revealAll={false} />
         <dl className="compare-list">
           <dt>Guess</dt>
-          <dd data-testid="adjudication-guess">{round.guessRaw}</dd>
+          <dd data-testid="judging-guess">{round.guessRaw}</dd>
         </dl>
-        <p className="subtle">The picker is judging the guess.</p>
+        <p className="subtle">The answer writer is judging the guess.</p>
       </section>
     );
   }
   return (
     <section className="paper-panel wait-panel">
-      <p className="seed-line">
-        Answer: <strong>{round.seedRaw}</strong>
+      <p className="answer-line">
+        Answer: <strong>{round.answerRaw}</strong>
       </p>
-      <p className="subtle">The picker is judging the guess.</p>
+      <p className="subtle">The answer writer is judging the guess.</p>
     </section>
   );
 }
 
 function RoundRecap({ game, round }: { game: Game; round: Round }): React.ReactElement {
-  const context = useSowsEarStore((state) => state.context);
-  const advance = useSowsEarStore((state) => state.advance);
+  const context = useGameStore((state) => state.context);
+  const advanceRound = useGameStore((state) => state.advanceRound);
   const isHost = normalizeHandle(game.hostHandle) === normalizeHandle(context.handle);
   return (
     <section className="paper-panel board-panel">
@@ -1270,22 +1320,22 @@ function RoundRecap({ game, round }: { game: Game; round: Round }): React.ReactE
       <h1>{round.accepted ? recapLine(round.depth) : "No match this time."}</h1>
       <dl className="compare-list">
         <dt>Category</dt>
-        <dd>{round.fieldLabel}</dd>
+        <dd>{round.categoryLabel}</dd>
         <dt>Answer</dt>
-        <dd data-testid="revealed-seed">{round.seedRaw}</dd>
+        <dd data-testid="revealed-answer">{round.answerRaw}</dd>
         <dt>Guess</dt>
         <dd>{round.guessRaw || "Passed"}</dd>
         <dt>Points</dt>
-        <dd>{round.ribbon ?? 0}</dd>
+        <dd>{round.points ?? 0}</dd>
       </dl>
-      <p className="score-note" data-testid="running-county-fair">
+      <p className="score-note" data-testid="running-final-score">
         Final score so far: {finalScore(game)} / 100
       </p>
       <Rows game={game} round={round} revealAll={true} />
       <PlayerLegend game={game} />
       {isHost ? (
-        <button type="button" className="button primary" onClick={() => void advance()} data-testid="advance">
-          {round.roundNumber >= game.totalHarvests ? "Final Score" : "Next Round"}
+        <button type="button" className="button primary" onClick={() => void advanceRound()} data-testid="advance">
+          {round.roundNumber >= game.totalRounds ? "Final Score" : "Next Round"}
         </button>
       ) : (
         <p className="subtle">Waiting for the host.</p>
@@ -1295,20 +1345,20 @@ function RoundRecap({ game, round }: { game: Game; round: Round }): React.ReactE
 }
 
 function Final({ game }: { game: Game }): React.ReactElement {
-  const summary = seasonSummary(game);
-  const copySummary = useSowsEarStore((state) => state.copySummary);
-  const createSeason = useSowsEarStore((state) => state.createSeason);
+  const summary = gameSummary(game);
+  const copySummary = useGameStore((state) => state.copySummary);
+  const createGame = useGameStore((state) => state.createGame);
   return (
     <section className="room-grid">
       <div className="paper-panel final-panel">
         <p className="eyebrow">Final Score</p>
         <h1>{finalScore(game)} / 100</h1>
         <div className="score-ledger">
-          <p data-testid="all-ribbons">
-            <strong>Every Round:</strong> {game.ribbons.join(", ") || "none"}
+          <p data-testid="all-round-points">
+            <strong>Every Round:</strong> {game.roundPoints.join(", ") || "none"}
           </p>
-          <p data-testid="counted-ribbons">
-            <strong>Counted Rounds:</strong> {topFive(game.ribbons).join(", ") || "none"}
+          <p data-testid="counted-round-points">
+            <strong>Counted Rounds:</strong> {topFive(game.roundPoints).join(", ") || "none"}
           </p>
         </div>
         <label>
@@ -1318,7 +1368,7 @@ function Final({ game }: { game: Game }): React.ReactElement {
         <button type="button" className="button secondary" onClick={() => void copySummary()} data-testid="copy-summary">
           Copy Summary
         </button>
-        <button type="button" className="button primary" onClick={() => void createSeason()} data-testid="rematch">
+        <button type="button" className="button primary" onClick={() => void createGame()} data-testid="rematch">
           Rematch
         </button>
       </div>
@@ -1328,8 +1378,8 @@ function Final({ game }: { game: Game }): React.ReactElement {
 }
 
 function Review({ game }: { game: Game }): React.ReactElement {
-  const context = useSowsEarStore((state) => state.context);
-  const leaveReview = useSowsEarStore((state) => state.leaveReview);
+  const context = useGameStore((state) => state.context);
+  const leaveReview = useGameStore((state) => state.leaveReview);
   return (
     <section className="paper-panel review-panel" data-testid="review-panel">
       <div className="panel-header">
@@ -1349,11 +1399,11 @@ function Review({ game }: { game: Game }): React.ReactElement {
       <div className="review-list">
         {game.rounds.map((round) => (
           <article className="review-item" key={round.id}>
-            <h2>Round {round.roundNumber}: {round.fieldLabel || "Category"}</h2>
+            <h2>Round {round.roundNumber}: {round.categoryLabel || "Category"}</h2>
             <p>
-              Answer: <strong>{round.seedRaw || ""}</strong>
+              Answer: <strong>{round.answerRaw || ""}</strong>
             </p>
-            <p>Guess: {round.guessRaw || "Passed"} · Points {round.ribbon ?? 0}</p>
+            <p>Guess: {round.guessRaw || "Passed"} · Points {round.points ?? 0}</p>
             <Rows game={game} round={round} revealAll={true} />
             <PlayerLegend game={game} />
             <Replay game={game} round={round} />
@@ -1368,7 +1418,7 @@ function Replay({ game, round }: { game: Game; round: Round }): React.ReactEleme
   const maxDepth = Math.max(0, ...round.entries.map((entry) => entry.depth));
   if (!maxDepth) return null;
   return (
-    <div className="harvest-replay" data-testid={`harvest-replay-${round.roundNumber}`}>
+    <div className="round-replay" data-testid={`round-replay-${round.roundNumber}`}>
       <h3>Replay</h3>
       {Array.from({ length: maxDepth }, (_, index) => {
         const depth = index + 1;
@@ -1390,7 +1440,7 @@ function Rows({
   viewerHandle = "",
   maxVisibleDepth,
   editableRows = [],
-  showPlantingState = false,
+  showLetterEntryState = false,
 }: {
   game: Game;
   round: Round;
@@ -1398,11 +1448,12 @@ function Rows({
   viewerHandle?: string;
   maxVisibleDepth?: number;
   editableRows?: Row[];
-  showPlantingState?: boolean;
+  showLetterEntryState?: boolean;
 }): React.ReactElement {
-  const context = useSowsEarStore((state) => state.context);
-  const roomState = useSowsEarStore((state) => state.roomState);
-  const now = useSowsEarStore((state) => state.now);
+  const context = useGameStore((state) => state.context);
+  const roomState = useGameStore((state) => state.roomState);
+  const presence = useGameStore((state) => state.presence);
+  const now = useGameStore((state) => state.now);
   const viewer = viewerHandle || context.handle;
   const editableRowIndexes = new Set(editableRows.map((row) => row.rowIndex));
   return (
@@ -1412,8 +1463,8 @@ function Rows({
         const editable = editableRowIndexes.has(row.rowIndex);
         const isComplete = rowIsComplete(round, row.rowIndex);
         const hasCurrentEntry = round.entries.some((entry) => entry.rowIndex === row.rowIndex && entry.depth === round.depth);
-        const showPendingCell = !revealAll && !isComplete && !hasCurrentEntry && round.phase === "planting";
-        const rowState = plantingRowState(round, row, viewer, roomState, now);
+        const showPendingCell = !revealAll && !isComplete && !hasCurrentEntry && round.phase === "letter-entry";
+        const rowState = letterEntryRowState(round, row, viewer, presence, now);
         const trailingBlankDepths = new Set(
           editable && showPendingCell ? trailingBlankEntriesForRow(round, row.rowIndex).map((entry) => entry.depth) : [],
         );
@@ -1422,10 +1473,10 @@ function Rows({
             (entry) =>
               revealAll ||
               maxVisibleDepth !== undefined ||
-              entry.sprouted ||
+              entry.revealed ||
               entry.depth < round.depth ||
               sameHandle(entry.handle, viewer) ||
-              (showPlantingState && round.phase === "planting" && entry.depth === round.depth),
+              (showLetterEntryState && round.phase === "letter-entry" && entry.depth === round.depth),
           )
           .sort((a, b) => a.depth - b.depth);
         const cellCount = entries.length + (showPendingCell ? 1 : 0);
@@ -1444,7 +1495,7 @@ function Rows({
                   const displayAsBlank =
                     entry.skipped ||
                     (maxVisibleDepth !== undefined && filledAtDepth > maxVisibleDepth) ||
-                    (!revealAll && !entry.sprouted && !sameHandle(entry.handle, viewer));
+                    (!revealAll && !entry.revealed && !sameHandle(entry.handle, viewer));
                   if (showPendingCell && trailingBlankDepths.has(entry.depth)) {
                     return (
                       <span className="slot editing blank-fill" key={entry.depth} data-testid={`clue-cell-${row.rowIndex}-${entry.depth}`}>
@@ -1478,7 +1529,7 @@ function Rows({
                 data-state={rowState.state}
                 data-presence={rowState.presence}
               >
-                {showPlantingState ? rowState.label : row.currentHolderHandle}
+                {showLetterEntryState ? rowState.label : row.currentHolderHandle}
               </span>
             )}
           </div>
@@ -1488,17 +1539,17 @@ function Rows({
   );
 }
 
-function plantingRowState(
+function letterEntryRowState(
   round: Round,
   row: Row,
   viewerHandle: string,
-  roomState: RoomState | undefined,
+  presence: RoomPresence[],
   now: number,
 ): { label: string; state: "complete" | "submitted" | "waiting" | "editable"; presence: "online" | "offline" } {
   const entry = round.entries.find((item) => item.rowIndex === row.rowIndex && item.depth === round.depth);
   const complete = rowIsComplete(round, row.rowIndex);
   const handle = entry?.handle ?? row.currentHolderHandle;
-  const online = isHandleOnline(handle, { roomSlug: "", handle: viewerHandle }, roomState, now);
+  const online = isHandleOnline(handle, { roomSlug: "", handle: viewerHandle }, presence, now);
 
   if (complete) return { label: "Complete", state: "complete", presence: online ? "online" : "offline" };
   if (!entry) {
@@ -1551,31 +1602,60 @@ function RowEntryTools({ rowIndex }: { rowIndex: number }): React.ReactElement {
   return (
     <div className="row-entry-tools">
       <input type="hidden" name={`blank-${rowIndex}`} value="0" data-testid={`skip-input-${rowIndex}`} />
+      <div className="mode-toggle" aria-label={`Row ${rowIndex + 1} entry mode`}>
+        <button
+          type="button"
+          className="mode-toggle-button"
+          aria-pressed="true"
+          data-testid={`letter-mode-${rowIndex}`}
+          onClick={(event) => {
+            const row = event.currentTarget.closest<HTMLElement>(".hint-row");
+            const input = row?.querySelector<HTMLInputElement>(`.clue-letter-input[data-row-index="${rowIndex}"]`);
+            if (!input) return;
+            setRowBlankMode(input, false);
+            input.focus({ preventScroll: true });
+          }}
+        >
+          Letter
+        </button>
+        <button
+          type="button"
+          className="mode-toggle-button"
+          aria-pressed="false"
+          data-testid={`skip-cell-${rowIndex}`}
+          onClick={(event) => {
+            const row = event.currentTarget.closest<HTMLElement>(".hint-row");
+            const input = row?.querySelector<HTMLInputElement>(`.clue-letter-input[data-row-index="${rowIndex}"]`);
+            if (!input) return;
+            setRowBlankMode(input, true);
+            focusNextIncompleteLetter(input);
+          }}
+        >
+          Skip
+        </button>
+      </div>
       <button
         type="button"
-        className="button quiet skip-cell-button"
-        data-testid={`skip-cell-${rowIndex}`}
+        className="period-toggle"
+        aria-label={`End word after row ${rowIndex + 1} letter`}
+        aria-pressed="false"
+        title="End word"
         onClick={(event) => {
-          const row = event.currentTarget.closest<HTMLElement>(".hint-row");
-          const input = row?.querySelector<HTMLInputElement>(`.clue-letter-input[data-row-index="${rowIndex}"]`);
-          if (!input) return;
-          const skipped = row?.dataset.blankMode === "true";
-          setRowBlankMode(input, !skipped);
-          if (!skipped) focusNextIncompleteLetter(input);
-          else input.focus({ preventScroll: true });
+          const checkbox = event.currentTarget.nextElementSibling;
+          if (!(checkbox instanceof HTMLInputElement) || checkbox.disabled) return;
+          checkbox.checked = !checkbox.checked;
+          setEndWordMarker(checkbox);
         }}
       >
-        Add Blank
+        .
       </button>
-      <label className="end-word-check">
-        <input
-          type="checkbox"
-          name={`end-${rowIndex}`}
-          data-testid={`word-end-${rowIndex}`}
-          onChange={(event) => setEndWordMarker(event.currentTarget)}
-        />
-        <span>End word</span>
-      </label>
+      <input
+        className="visually-hidden end-word-input"
+        type="checkbox"
+        name={`end-${rowIndex}`}
+        data-testid={`word-end-${rowIndex}`}
+        onChange={(event) => setEndWordMarker(event.currentTarget)}
+      />
     </div>
   );
 }
@@ -1609,8 +1689,8 @@ function PlayerLegend({ game }: { game: Game }): React.ReactElement {
 }
 
 function History(): React.ReactElement {
-  const roomState = useSowsEarStore((state) => state.roomState);
-  const reviewGame = useSowsEarStore((state) => state.reviewGame);
+  const roomState = useGameStore((state) => state.roomState);
+  const reviewGame = useGameStore((state) => state.reviewGame);
   const completeGames = [...(roomState?.games ?? [])].filter((game) => game.status === "complete").sort((a, b) => (b.completedAt ?? 0) - (a.completedAt ?? 0));
   return (
     <div className="paper-panel">
@@ -1669,8 +1749,11 @@ function setEndWordMarker(checkbox: HTMLInputElement): void {
   const row = checkbox.closest<HTMLElement>(".hint-row");
   const editors = row ? Array.from(row.querySelectorAll<HTMLElement>(".cell-editor")) : [];
   const editor = editors.at(-1);
-  if (!editor) return;
-  editor.dataset.endWord = checkbox.checked ? "true" : "false";
+  if (editor) editor.dataset.endWord = checkbox.checked ? "true" : "false";
+  const periodButton = checkbox.previousElementSibling;
+  if (periodButton instanceof HTMLButtonElement) {
+    periodButton.setAttribute("aria-pressed", checkbox.checked ? "true" : "false");
+  }
 }
 
 function setRowBlankMode(input: HTMLInputElement, skipped: boolean): void {
@@ -1678,10 +1761,14 @@ function setRowBlankMode(input: HTMLInputElement, skipped: boolean): void {
   const rowIndex = input.dataset.rowIndex ?? "";
   const skipInput = row?.querySelector<HTMLInputElement>(`[data-testid="skip-input-${rowIndex}"]`);
   const endWord = row?.querySelector<HTMLInputElement>('input[name^="end-"]');
-  const skipButton = row?.querySelector<HTMLButtonElement>(".skip-cell-button");
+  const letterModeButton = row?.querySelector<HTMLButtonElement>(`[data-testid="letter-mode-${rowIndex}"]`);
+  const skipButton = row?.querySelector<HTMLButtonElement>(`[data-testid="skip-cell-${rowIndex}"]`);
+  const periodButton = row?.querySelector<HTMLButtonElement>(".period-toggle");
   const inputs = row ? Array.from(row.querySelectorAll<HTMLInputElement>(`.clue-letter-input[data-row-index="${rowIndex}"]`)) : [];
   if (skipInput) skipInput.value = skipped ? "1" : "0";
   if (row) row.dataset.blankMode = skipped ? "true" : "false";
+  letterModeButton?.setAttribute("aria-pressed", skipped ? "false" : "true");
+  skipButton?.setAttribute("aria-pressed", skipped ? "true" : "false");
   for (const rowInput of inputs) {
     const slot = rowInput.closest<HTMLElement>(".slot");
     if (slot) slot.dataset.skipped = skipped ? "true" : "false";
@@ -1696,7 +1783,7 @@ function setRowBlankMode(input: HTMLInputElement, skipped: boolean): void {
   } else if (endWord) {
     endWord.disabled = false;
   }
-  if (skipButton) skipButton.textContent = skipped ? "Use Letters" : "Add Blank";
+  if (periodButton) periodButton.disabled = skipped;
 }
 
 function focusNextIncompleteLetter(input: HTMLInputElement): void {
@@ -1721,12 +1808,12 @@ function nextIncompleteLetterInput(current: HTMLInputElement): HTMLInputElement 
 }
 
 function useAutoFocus(): void {
-  const context = useSowsEarStore((state) => state.context);
-  const roomState = useSowsEarStore((state) => state.roomState);
-  const pendingGuess = useSowsEarStore((state) => state.pendingGuess);
-  const focusTarget = useSowsEarStore((state) => state.focusTarget);
-  const helpOpen = useSowsEarStore((state) => state.helpOpen);
-  const clearFocusTarget = useSowsEarStore((state) => state.clearFocusTarget);
+  const context = useGameStore((state) => state.context);
+  const roomState = useGameStore((state) => state.roomState);
+  const pendingGuess = useGameStore((state) => state.pendingGuess);
+  const focusTarget = useGameStore((state) => state.focusTarget);
+  const helpOpen = useGameStore((state) => state.helpOpen);
+  const clearFocusTarget = useGameStore((state) => state.clearFocusTarget);
   useLayoutEffect(() => {
     if (helpOpen) return;
     if (focusTarget) {
@@ -1739,7 +1826,7 @@ function useAutoFocus(): void {
   }, [context.roomSlug, context.handle, context.reviewGameId, roomState, pendingGuess, focusTarget, helpOpen, clearFocusTarget]);
 }
 
-async function dispatch(result: CommandResult, set: (partial: Partial<SowsEarState>) => void, get: () => SowsEarState): Promise<void> {
+async function dispatch(result: CommandResult, set: (partial: Partial<GameState>) => void, get: () => GameState): Promise<void> {
   if (!result.ok) {
     set({ error: result.error });
     return;
@@ -1751,8 +1838,8 @@ async function dispatch(result: CommandResult, set: (partial: Partial<SowsEarSta
 async function dispatchOnce(
   name: string,
   makeResult: () => CommandResult,
-  set: (partial: Partial<SowsEarState>) => void,
-  get: () => SowsEarState,
+  set: (partial: Partial<GameState>) => void,
+  get: () => GameState,
 ): Promise<void> {
   const key = commandKey(name, get());
   const runtime = get().runtime;
@@ -1765,19 +1852,19 @@ async function dispatchOnce(
   }
 }
 
-function commandKey(name: string, state: SowsEarState): string {
+function commandKey(name: string, state: GameState): string {
   const game = state.roomState ? activeGame(state.roomState) : undefined;
   const round = game ? currentRound(game) : undefined;
   return [name, state.context.handle, game?.id ?? "room", round?.id ?? "none", game?.phaseVersion ?? 0, round?.depth ?? 0].join(":");
 }
 
-function requiredRoomState(get: () => SowsEarState): RoomState {
+function requiredRoomState(get: () => GameState): RoomState {
   const state = get().roomState;
   if (!state) throw new Error("Room state is not loaded.");
   return state;
 }
 
-function readContextFromLocation(state: Pick<SowsEarState, "rememberedRooms" | "lastHandle">): AppContext {
+function readContextFromLocation(state: Pick<GameState, "rememberedRooms" | "lastHandle">): AppContext {
   const url = new URL(window.location.href);
   const roomSlug = roomSlugFrom(url.searchParams.get("room") ?? "");
   const handleFromUrl = url.searchParams.get("handle")?.trim() ?? "";
@@ -1800,8 +1887,21 @@ function formValue(form: HTMLFormElement, name: string): string {
   return typeof value === "string" ? value.trim() : "";
 }
 
-function titleCase(value: string): string {
-  return value.slice(0, 1).toLocaleUpperCase("en-US") + value.slice(1);
+function roleLabel(role: string): string {
+  if (role === "guesser") return "Guesser";
+  if (role === "answerWriter") return "Answer Writer";
+  if (role === "clueGiver") return "Clue Giver";
+  return "Observer";
+}
+
+function lobbyRolePreview(game: Game): string {
+  const players = [...game.players].filter((player) => player.ready).sort((a, b) => a.seatNumber - b.seatNumber);
+  if (players.length < 3) return "";
+  const guesser = players[0];
+  const answerWriter = players[1];
+  const clueGivers = players.slice(1).map((player) => player.displayName);
+  if (!guesser || !answerWriter) return "";
+  return `First round: ${guesser.displayName} guesses, ${answerWriter.displayName} writes the answer, ${clueGivers.join(", ")} give clues.`;
 }
 
 function sameHandle(left: string, right: string): boolean {
@@ -1814,8 +1914,8 @@ function recapLine(depth: number): string {
   return "Solved just in time.";
 }
 
-function topFive(ribbons: number[]): number[] {
-  return [...ribbons].sort((a, b) => b - a).slice(0, 5);
+function topFive(roundPoints: number[]): number[] {
+  return [...roundPoints].sort((a, b) => b - a).slice(0, 5);
 }
 
 function penForHandle(game: Game, handle: string): PenStyle {
@@ -1840,26 +1940,26 @@ function playerForGame(game: Game, handle: string): boolean {
   return game.players.some((player) => player.normalizedHandle === normalizeHandle(handle));
 }
 
-function isHandleOnline(handle: string, context: AppContext, roomState: RoomState | undefined, now: number): boolean {
+function isHandleOnline(handle: string, context: AppContext, presence: RoomPresence[], now: number): boolean {
   if (normalizeHandle(handle) === normalizeHandle(context.handle)) return true;
-  const roomHandle = roomState?.handles.find((item) => item.normalizedHandle === normalizeHandle(handle));
-  return Boolean(roomHandle && now - roomHandle.lastSeenAt <= PRESENCE_ONLINE_MS);
+  const roomPresence = presence.find((item) => item.normalizedHandle === normalizeHandle(handle));
+  return Boolean(roomPresence && now - roomPresence.lastSeenAt <= PRESENCE_ONLINE_MS);
 }
 
 function focusPrimaryAction(): void {
   const selectors = [
     '[data-testid="room-input"]',
     '[data-testid="handle-input"]',
-    '[data-testid="create-season"]',
-    '[data-testid="start-season"]:not(:disabled)',
-    '[data-testid="field-option"]',
-    '[data-testid="seed-input"]',
+    '[data-testid="create-game"]',
+    '[data-testid="start-game"]:not(:disabled)',
+    '[data-testid="category-option"]',
+    '[data-testid="answer-input"]',
     '[data-testid^="letter-input-"]',
     '[data-testid="confirm-guess"]',
     '[data-testid="guess-input"]',
     '[data-testid="accept-guess"]',
     '[data-testid="advance"]',
-    '[data-testid="resume-season"]',
+    '[data-testid="resume-game"]',
   ];
   for (const selector of selectors) {
     const element = document.querySelector<HTMLElement>(selector);
@@ -1896,20 +1996,20 @@ function isFocusable(element: HTMLElement): boolean {
   return element.getClientRects().length > 0;
 }
 
-function seasonSummary(game: Game): string {
-  const points = game.ribbons.map((pointValue, index) => `Round ${index + 1}: ${pointValue}`).join(", ");
-  return `Final Score ${finalScore(game)} / 100\nBest five rounds: ${topFive(game.ribbons).join(", ") || "none"}\n${points || "No rounds yet."}`;
+function gameSummary(game: Game): string {
+  const points = game.roundPoints.map((pointValue, index) => `Round ${index + 1}: ${pointValue}`).join(", ");
+  return `Final Score ${finalScore(game)} / 100\nBest five rounds: ${topFive(game.roundPoints).join(", ") || "none"}\n${points || "No rounds yet."}`;
 }
 
 export function startApp(): void {
-  startFieldCountGuard();
+  startCategoryCountGuard();
   const root = document.getElementById("app");
   if (!root) throw new Error("Missing element #app");
-  createRoot(root).render(<SowsEarApp />);
+  createRoot(root).render(<CowslipApp />);
 }
 
-function startFieldCountGuard(): void {
-  if (STARTER_FIELDS.length < 120) {
-    console.warn(`Starter category pack has ${STARTER_FIELDS.length} categories; launch target is 120-200.`);
+function startCategoryCountGuard(): void {
+  if (STARTER_CATEGORIES.length < 120) {
+    console.warn(`Starter category pack has ${STARTER_CATEGORIES.length} categories; launch target is 120-200.`);
   }
 }

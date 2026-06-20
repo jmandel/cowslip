@@ -1,6 +1,6 @@
-import { id, init } from "@instantdb/core";
+import { id, init, lookup } from "@instantdb/core";
 import schema from "../../instant.schema";
-import type { SowsEarEvent } from "../game/types";
+import type { GameEvent, RoomPresence } from "../game/types";
 import type { EventStore } from "./event-store";
 
 export class InstantEventStore implements EventStore {
@@ -11,7 +11,7 @@ export class InstantEventStore implements EventStore {
     this.db = init({ appId, schema });
   }
 
-  subscribe(roomSlug: string, callback: (events: SowsEarEvent[]) => void): () => void {
+  subscribe(roomSlug: string, callback: (events: GameEvent[]) => void): () => void {
     return this.db.subscribeQuery(
       {
         gameEvents: {
@@ -29,9 +29,9 @@ export class InstantEventStore implements EventStore {
         const rows = resp.data?.gameEvents ?? [];
         callback(
           rows.map((row) => {
-            const event: SowsEarEvent = {
+            const event: GameEvent = {
             actionId: row.actionId,
-            type: row.type as SowsEarEvent["type"],
+            type: row.type as GameEvent["type"],
             roomSlug: row.roomSlug,
             actorHandle: row.actorHandle,
             createdAt: Number(row.createdAt),
@@ -53,10 +53,43 @@ export class InstantEventStore implements EventStore {
     );
   }
 
-  async append(events: SowsEarEvent[]): Promise<void> {
+  subscribePresence(roomSlug: string, callback: (presence: RoomPresence[]) => void): () => void {
+    return this.db.subscribeQuery(
+      {
+        roomPresence: {
+          $: {
+            where: { roomSlug },
+          },
+        },
+      },
+      (resp) => {
+        if (resp.error) {
+          console.error(resp.error);
+          callback([]);
+          return;
+        }
+        callback(
+          (resp.data?.roomPresence ?? []).map((row) => ({
+            presenceKey: row.presenceKey,
+            roomSlug: row.roomSlug,
+            handle: row.handle,
+            normalizedHandle: row.normalizedHandle,
+            displayName: row.displayName,
+            lastSeenAt: Number(row.lastSeenAt),
+            createdAt: Number(row.createdAt),
+            updatedAt: Number(row.updatedAt),
+          })),
+        );
+      },
+    );
+  }
+
+  async append(events: GameEvent[]): Promise<void> {
     if (!events.length) return;
-    await this.db.transact(
-      events.map((event) => {
+    const lastEventAt = Math.max(...events.map((event) => event.createdAt));
+    const roomSlug = events[0]!.roomSlug;
+    const activeGameId = activeGameIdFromEvents(events);
+    const eventTransactions = events.map((event) => {
         const payload: Record<string, unknown> = { ...event.payload };
         if (typeof event.expectedPhaseVersion === "number") {
           payload.expectedPhaseVersion = event.expectedPhaseVersion;
@@ -73,7 +106,53 @@ export class InstantEventStore implements EventStore {
           payload,
           createdAt: event.createdAt,
         });
-      }),
-    );
+      });
+    await this.db.transact(eventTransactions);
+
+    const summaryUpdate: Record<string, unknown> = {
+      roomSlug,
+      lastEventAt,
+      updatedAt: lastEventAt,
+      createdAt: lastEventAt,
+    };
+    if (activeGameId !== undefined) summaryUpdate.activeGameId = activeGameId;
+    const summaryTx = this.db.tx.roomSummaries[lookup("roomSlug", roomSlug)];
+    if (!summaryTx) return;
+    try {
+      await this.db.transact(summaryTx.update(summaryUpdate));
+    } catch (error) {
+      console.warn("Could not update room summary.", error);
+    }
   }
+
+  async markSeen(input: { roomSlug: string; handle: string; normalizedHandle: string; displayName: string }): Promise<void> {
+    const now = Date.now();
+    const presenceKey = `${input.roomSlug}:${input.normalizedHandle}`;
+    const presenceTx = this.db.tx.roomPresence[lookup("presenceKey", presenceKey)];
+    if (!presenceTx) throw new Error("Could not create roomPresence transaction.");
+    try {
+      await this.db.transact(
+        presenceTx.update({
+          presenceKey,
+          roomSlug: input.roomSlug,
+          handle: input.handle,
+          normalizedHandle: input.normalizedHandle,
+          displayName: input.displayName,
+          lastSeenAt: now,
+          createdAt: now,
+          updatedAt: now,
+        }),
+      );
+    } catch (error) {
+      console.warn("Could not update room presence.", error);
+    }
+  }
+}
+
+function activeGameIdFromEvents(events: GameEvent[]): string | undefined {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index]!;
+    if (event.type === "game.created" && event.gameId) return event.gameId;
+  }
+  return undefined;
 }

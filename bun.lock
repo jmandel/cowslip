@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "sowsear",
+      "name": "cowslip",
       "dependencies": {
         "@instantdb/core": "latest",
         "lucide-react": "^1.21.0",

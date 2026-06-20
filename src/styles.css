@@ -36,8 +36,9 @@ button {
 }
 
 :focus-visible {
-  outline: 0;
-  box-shadow: inset 0 0 0 2px #111;
+  outline: 2px solid #111;
+  outline-offset: 3px;
+  box-shadow: none;
 }
 
 .sr-only {
@@ -192,7 +193,8 @@ button {
 }
 
 .button.primary:focus-visible {
-  box-shadow: inset 0 0 0 2px #fff;
+  outline-color: #111;
+  box-shadow: none;
 }
 
 .button.secondary,
@@ -368,11 +370,11 @@ textarea {
   align-items: center;
 }
 
-.field-control {
+.form-control {
   display: block;
 }
 
-.field-control input,
+.form-control input,
 .handle-panel .button.primary,
 .room-entry-card .button.primary,
 .guess-form .button.primary {
@@ -457,7 +459,7 @@ textarea {
 }
 
 .status-card,
-.ribbon-ladder,
+.points-ladder,
 .host-controls {
   display: grid;
   gap: 12px;
@@ -481,7 +483,7 @@ textarea {
 }
 
 .score-inline span,
-.ribbon-ladder-heading {
+.points-ladder-heading {
   color: #555;
   font-weight: 800;
 }
@@ -491,7 +493,7 @@ textarea {
   line-height: 1;
 }
 
-.ribbon-ladder-heading {
+.points-ladder-heading {
   display: flex;
   justify-content: space-between;
   gap: 12px;
@@ -517,13 +519,24 @@ textarea {
   width: 100%;
 }
 
-.field-options {
+.host-controls summary {
+  cursor: pointer;
+  font-weight: 800;
+}
+
+.host-controls-body {
+  display: grid;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.category-options {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 12px;
 }
 
-.field-card {
+.category-card {
   min-height: 140px;
   border: 1px solid #111;
   background: #fff;
@@ -534,24 +547,24 @@ textarea {
   gap: 10px;
 }
 
-.field-card span {
+.category-card span {
   font-weight: 800;
   text-transform: uppercase;
 }
 
-.field-card strong {
+.category-card strong {
   font-size: 1.6rem;
   line-height: 1.05;
 }
 
-.seed-line,
+.answer-line,
 .score-note,
 .score-ledger {
   border-left: 2px solid #111;
   padding-left: 10px;
 }
 
-.ribbon-callout {
+.points-callout {
   width: fit-content;
   border: 1px solid #111;
   padding: 7px 10px;
@@ -724,29 +737,56 @@ textarea {
   justify-self: end;
 }
 
-.letter-form .skip-cell-button,
-.row-entry-tools .button {
-  width: auto;
-  min-width: 82px;
-  justify-self: start;
-  min-height: 32px;
-  padding: 4px 10px;
+.mode-toggle {
+  display: inline-grid;
+  grid-template-columns: 1fr 1fr;
+  width: 148px;
+  border: 2px solid #111;
 }
 
-.end-word-check {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 0.92rem;
-  font-weight: 700;
+.mode-toggle-button,
+.period-toggle {
+  min-height: 34px;
+  border: 0;
+  border-radius: 0;
+  background: #fff;
+  color: #111;
+  font: inherit;
+  font-weight: 800;
+  line-height: 1;
 }
 
-.end-word-check input {
-  width: 18px;
-  height: 18px;
-  min-height: 18px;
+.mode-toggle-button + .mode-toggle-button {
+  border-left: 2px solid #111;
+}
+
+.mode-toggle-button[aria-pressed="true"],
+.period-toggle[aria-pressed="true"] {
+  background: #111;
+  color: #fff;
+}
+
+.period-toggle {
+  width: 36px;
+  border: 2px solid #111;
+  font-size: 1.45rem;
+  padding-bottom: 7px;
+}
+
+.period-toggle:disabled {
+  opacity: 0.35;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
   padding: 0;
-  accent-color: #111;
 }
 
 .compare-list {
@@ -801,7 +841,7 @@ textarea {
   padding-top: 14px;
 }
 
-.harvest-replay {
+.round-replay {
   display: grid;
   gap: 10px;
   margin-top: 14px;

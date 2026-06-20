@@ -2,36 +2,35 @@ import { describe, expect, test } from "bun:test";
 import { DEFAULT_PACK_ID, RULES_VERSION } from "../config";
 import {
   activeGame,
-  commandAdjudicate,
-  commandAdvanceAfterRecap,
+  commandJudgeGuess,
+  commandAdvanceRound,
   commandClaimHost,
-  commandChooseField,
+  commandChooseCategory,
   commandClaimHandle,
-  commandCreateSeason,
+  commandCreateGame,
   commandGuess,
-  commandJoinSeason,
-  commandMarkHandleSeen,
+  commandJoinGame,
   commandMoveSeat,
-  commandPauseSeason,
-  commandPlantLetters,
-  commandPlantSeed,
+  commandPauseGame,
+  commandSubmitLetters,
+  commandSubmitAnswer,
   commandRandomizeSeats,
-  commandResumeSeason,
+  commandResumeGame,
   commandSetReady,
-  commandSpoil,
-  commandStartSeason,
+  commandPassRound,
+  commandStartGame,
   commandTransferHost,
-  commandTrySprout,
-  commandVoidHarvest,
-  commandWait,
+  commandTryRevealLetters,
+  commandVoidRound,
+  commandRequestMoreLetters,
   currentRound,
   finalScore,
   HOST_RECOVERY_OFFLINE_MS,
   reduceEvents,
-  rowsHeldForClue,
+  rowsHeldByClueGiver,
 } from "./model";
 import { clampLetter } from "./rules";
-import type { ClueCellInput, CommandResult, RoomState, SowsEarEvent } from "./types";
+import type { ClueCellInput, CommandResult, RoomState, GameEvent } from "./types";
 
 function apply(state: RoomState, result: CommandResult): RoomState {
   expect(result.ok).toBe(true);
@@ -39,11 +38,11 @@ function apply(state: RoomState, result: CommandResult): RoomState {
   return reduceEvents(state.roomSlug, [...eventsFrom(state), ...result.events]);
 }
 
-function eventsFrom(state: RoomState): SowsEarEvent[] {
+function eventsFrom(state: RoomState): GameEvent[] {
   return [...state.appliedActionIds].map((actionId) => (globalThis as any).__events[actionId]).filter(Boolean);
 }
 
-function remember(events: SowsEarEvent[]): void {
+function remember(events: GameEvent[]): void {
   (globalThis as any).__events ??= {};
   for (const event of events) (globalThis as any).__events[event.actionId] = event;
 }
@@ -61,12 +60,12 @@ function startThreePlayerGame(): RoomState {
     const claimed = commandClaimHandle(state, handle);
     state = applyRemembered(state, claimed);
   }
-  state = applyRemembered(state, commandCreateSeason(state, "Alice"));
-  state = applyRemembered(state, commandJoinSeason(state, "Bob"));
-  state = applyRemembered(state, commandJoinSeason(state, "Cora"));
+  state = applyRemembered(state, commandCreateGame(state, "Alice"));
+  state = applyRemembered(state, commandJoinGame(state, "Bob"));
+  state = applyRemembered(state, commandJoinGame(state, "Cora"));
   state = applyRemembered(state, commandSetReady(state, "Bob", true));
   state = applyRemembered(state, commandSetReady(state, "Cora", true));
-  state = applyRemembered(state, commandStartSeason(state, "Alice"));
+  state = applyRemembered(state, commandStartGame(state, "Alice"));
   return state;
 }
 
@@ -75,32 +74,32 @@ function startGameWithHandles(handles: string[]): RoomState {
   for (const handle of handles) {
     state = applyRemembered(state, commandClaimHandle(state, handle));
   }
-  state = applyRemembered(state, commandCreateSeason(state, handles[0]!));
+  state = applyRemembered(state, commandCreateGame(state, handles[0]!));
   for (const handle of handles.slice(1)) {
-    state = applyRemembered(state, commandJoinSeason(state, handle));
+    state = applyRemembered(state, commandJoinGame(state, handle));
     state = applyRemembered(state, commandSetReady(state, handle, true));
   }
-  return applyRemembered(state, commandStartSeason(state, handles[0]!));
+  return applyRemembered(state, commandStartGame(state, handles[0]!));
 }
 
-function plantFirstDepth(state: RoomState): RoomState {
+function submitFirstDepth(state: RoomState): RoomState {
   const game = activeGame(state)!;
   const round = currentRound(game)!;
-  state = applyRemembered(state, commandChooseField(state, "Alice", round.fieldOptions[0]!));
-  state = applyRemembered(state, commandPlantSeed(state, "Bob", "Bale"));
-  state = applyRemembered(state, commandPlantLetters(state, "Bob", new Map([[0, clampLetter("h")], [1, clampLetter("s")]])));
-  state = applyRemembered(state, commandPlantLetters(state, "Cora", new Map([[2, clampLetter("c")], [3, clampLetter("w")]])));
+  state = applyRemembered(state, commandChooseCategory(state, "Alice", round.categoryOptions[0]!));
+  state = applyRemembered(state, commandSubmitAnswer(state, "Bob", "Bale"));
+  state = applyRemembered(state, commandSubmitLetters(state, "Bob", new Map([[0, clampLetter("h")], [1, clampLetter("s")]])));
+  state = applyRemembered(state, commandSubmitLetters(state, "Cora", new Map([[2, clampLetter("c")], [3, clampLetter("w")]])));
   return state;
 }
 
-function chooseCurrentFieldAndSeed(state: RoomState, seed: string): RoomState {
+function chooseCurrentCategoryAndAnswer(state: RoomState, answer: string): RoomState {
   const game = activeGame(state)!;
   const round = currentRound(game)!;
-  state = applyRemembered(state, commandChooseField(state, round.farmerHandle, round.fieldOptions[0]!));
-  return applyRemembered(state, commandPlantSeed(state, round.sowerHandle, seed));
+  state = applyRemembered(state, commandChooseCategory(state, round.guesserHandle, round.categoryOptions[0]!));
+  return applyRemembered(state, commandSubmitAnswer(state, round.answerWriterHandle, answer));
 }
 
-function plantCurrentDepth(state: RoomState, letter = "A"): RoomState {
+function submitCurrentDepth(state: RoomState, letter = "A"): RoomState {
   const game = activeGame(state)!;
   const round = currentRound(game)!;
   const byHolder = new Map<string, Map<number, string>>();
@@ -110,7 +109,7 @@ function plantCurrentDepth(state: RoomState, letter = "A"): RoomState {
     byHolder.set(row.currentHolderHandle, map);
   }
   for (const [handle, letters] of byHolder) {
-    state = applyRemembered(state, commandPlantLetters(state, handle, letters));
+    state = applyRemembered(state, commandSubmitLetters(state, handle, letters));
   }
   return state;
 }
@@ -118,9 +117,9 @@ function plantCurrentDepth(state: RoomState, letter = "A"): RoomState {
 function resolveCurrentRoundExactly(state: RoomState): RoomState {
   const game = activeGame(state)!;
   const round = currentRound(game)!;
-  state = chooseCurrentFieldAndSeed(state, `Seed ${round.roundNumber}`);
-  state = plantCurrentDepth(state, "S");
-  return applyRemembered(state, commandGuess(state, round.farmerHandle, `seed ${round.roundNumber}`));
+  state = chooseCurrentCategoryAndAnswer(state, `Answer ${round.roundNumber}`);
+  state = submitCurrentDepth(state, "S");
+  return applyRemembered(state, commandGuess(state, round.guesserHandle, `answer ${round.roundNumber}`));
 }
 
 describe("room command model", () => {
@@ -129,59 +128,36 @@ describe("room command model", () => {
     const game = activeGame(state)!;
     const round = currentRound(game)!;
     expect(game.players.map((player) => player.handle)).toEqual(["Alice", "Bob", "Cora"]);
-    expect(game.totalHarvests).toBe(6);
-    expect(game.phase).toBe("field-choice");
-    expect(round.farmerHandle).toBe("Alice");
-    expect(round.sowerHandle).toBe("Bob");
+    expect(game.totalRounds).toBe(6);
+    expect(game.phase).toBe("category-choice");
+    expect(round.guesserHandle).toBe("Alice");
+    expect(round.answerWriterHandle).toBe("Bob");
   });
 
-  test("handle seen events update room-local presence without changing the claim time", () => {
+  test("handle claims are replayable room events", () => {
     let state = reduceEvents("presence-room", []);
     state = applyRemembered(state, commandClaimHandle(state, "Alice"));
     const createdAt = state.handles[0]!.createdAt;
-    const firstSeenAt = state.handles[0]!.lastSeenAt;
 
-    state = applyRemembered(state, commandMarkHandleSeen(state, "Alice"));
     expect(state.handles).toHaveLength(1);
     expect(state.handles[0]!.createdAt).toBe(createdAt);
-    expect(state.handles[0]!.lastSeenAt).toBeGreaterThan(firstSeenAt);
+    expect(state.handles[0]!.lastSeenAt).toBe(createdAt);
   });
 
-  test("season creation persists current rules version and field pack", () => {
+  test("game creation persists current rules version and category pack", () => {
     let state = reduceEvents("version-room", []);
     state = applyRemembered(state, commandClaimHandle(state, "Alice"));
-    const created = commandCreateSeason(state, "Alice");
+    const created = commandCreateGame(state, "Alice");
     expect(created.ok).toBe(true);
     if (!created.ok) throw new Error("expected created game");
-    const seasonEvent = created.events.find((event) => event.type === "season.created")!;
-    expect(seasonEvent.payload.rulesVersion).toBe(RULES_VERSION);
-    expect(seasonEvent.payload.fieldPackId).toBe(DEFAULT_PACK_ID);
+    const gameEvent = created.events.find((event) => event.type === "game.created")!;
+    expect(gameEvent.payload.rulesVersion).toBe(RULES_VERSION);
+    expect(gameEvent.payload.categoryPackId).toBe(DEFAULT_PACK_ID);
 
     state = applyRemembered(state, created);
     const game = activeGame(state)!;
     expect(game.rulesVersion).toBe(RULES_VERSION);
-    expect(game.fieldPackId).toBe(DEFAULT_PACK_ID);
-  });
-
-  test("legacy season-created events preserve their rules version for migration", () => {
-    const legacy: SowsEarEvent = {
-      actionId: "legacy-season",
-      type: "season.created",
-      roomSlug: "legacy-room",
-      actorHandle: "Alice",
-      gameId: "legacy-game",
-      createdAt: 100,
-      payload: {
-        gameId: "legacy-game",
-        hostHandle: "Alice",
-        rulesVersion: "sows-ear-0.2",
-        fieldPackId: "starter-fields-legacy",
-      },
-    };
-    const state = reduceEvents("legacy-room", [legacy]);
-    const game = activeGame(state)!;
-    expect(game.rulesVersion).toBe("sows-ear-0.2");
-    expect(game.fieldPackId).toBe("starter-fields-legacy");
+    expect(game.categoryPackId).toBe(DEFAULT_PACK_ID);
   });
 
   test("starts valid 4, 5, and 8 player games with expected round counts", () => {
@@ -190,7 +166,7 @@ describe("room command model", () => {
       const state = startGameWithHandles(handles);
       const game = activeGame(state)!;
       expect(game.players).toHaveLength(count);
-      expect(game.totalHarvests).toBe(count <= 4 ? count * 2 : count);
+      expect(game.totalRounds).toBe(count <= 4 ? count * 2 : count);
       expect(currentRound(game)?.rows).toHaveLength(0);
     }
   });
@@ -199,29 +175,29 @@ describe("room command model", () => {
     let state = startThreePlayerGame();
     const round = currentRound(activeGame(state)!)!;
 
-    expect(commandChooseField(state, "Bob", round.fieldOptions[0]!).ok).toBe(false);
-    expect(commandChooseField(state, "Alice", "not-an-offered-field").ok).toBe(false);
+    expect(commandChooseCategory(state, "Bob", round.categoryOptions[0]!).ok).toBe(false);
+    expect(commandChooseCategory(state, "Alice", "not-an-offered-category").ok).toBe(false);
 
-    state = applyRemembered(state, commandChooseField(state, "Alice", round.fieldOptions[0]!));
+    state = applyRemembered(state, commandChooseCategory(state, "Alice", round.categoryOptions[0]!));
     const chosen = currentRound(activeGame(state)!)!;
-    expect(chosen.fieldId).toBe(round.fieldOptions[0]);
-    expect(chosen.phase).toBe("seed");
+    expect(chosen.categoryId).toBe(round.categoryOptions[0]);
+    expect(chosen.phase).toBe("answer-entry");
   });
 
-  test("only the picker can enter a non-empty answer once", () => {
+  test("only the answer writer can enter a non-empty answer once", () => {
     let state = startThreePlayerGame();
     const round = currentRound(activeGame(state)!)!;
-    state = applyRemembered(state, commandChooseField(state, "Alice", round.fieldOptions[0]!));
+    state = applyRemembered(state, commandChooseCategory(state, "Alice", round.categoryOptions[0]!));
 
-    expect(commandPlantSeed(state, "Alice", "Bale").ok).toBe(false);
-    expect(commandPlantSeed(state, "Cora", "Bale").ok).toBe(false);
-    expect(commandPlantSeed(state, "Bob", "   ").ok).toBe(false);
+    expect(commandSubmitAnswer(state, "Alice", "Bale").ok).toBe(false);
+    expect(commandSubmitAnswer(state, "Cora", "Bale").ok).toBe(false);
+    expect(commandSubmitAnswer(state, "Bob", "   ").ok).toBe(false);
 
-    state = applyRemembered(state, commandPlantSeed(state, "Bob", "  Bale  "));
-    const planted = currentRound(activeGame(state)!)!;
-    expect(planted.seedRaw).toBe("Bale");
-    expect(planted.phase).toBe("planting");
-    expect(commandPlantSeed(state, "Bob", "Barn").ok).toBe(false);
+    state = applyRemembered(state, commandSubmitAnswer(state, "Bob", "  Bale  "));
+    const submitted = currentRound(activeGame(state)!)!;
+    expect(submitted.answerRaw).toBe("Bale");
+    expect(submitted.phase).toBe("letter-entry");
+    expect(commandSubmitAnswer(state, "Bob", "Barn").ok).toBe(false);
   });
 
   test("host can reorder lobby seats before start and roles follow the new order", () => {
@@ -229,9 +205,9 @@ describe("room command model", () => {
     for (const handle of ["Alice", "Bob", "Cora"]) {
       state = applyRemembered(state, commandClaimHandle(state, handle));
     }
-    state = applyRemembered(state, commandCreateSeason(state, "Alice"));
-    state = applyRemembered(state, commandJoinSeason(state, "Bob"));
-    state = applyRemembered(state, commandJoinSeason(state, "Cora"));
+    state = applyRemembered(state, commandCreateGame(state, "Alice"));
+    state = applyRemembered(state, commandJoinGame(state, "Bob"));
+    state = applyRemembered(state, commandJoinGame(state, "Cora"));
     state = applyRemembered(state, commandSetReady(state, "Bob", true));
     state = applyRemembered(state, commandSetReady(state, "Cora", true));
 
@@ -243,10 +219,10 @@ describe("room command model", () => {
     expect(game.players.map((player) => player.handle)).toEqual(["Cora", "Alice", "Bob"]);
     expect(game.players.find((player) => player.handle === "Alice")?.isHost).toBe(true);
 
-    state = applyRemembered(state, commandStartSeason(state, "Alice"));
+    state = applyRemembered(state, commandStartGame(state, "Alice"));
     game = activeGame(state)!;
-    expect(currentRound(game)?.farmerHandle).toBe("Cora");
-    expect(currentRound(game)?.sowerHandle).toBe("Alice");
+    expect(currentRound(game)?.guesserHandle).toBe("Cora");
+    expect(currentRound(game)?.answerWriterHandle).toBe("Alice");
   });
 
   test("host can randomize lobby seats without changing membership", () => {
@@ -254,9 +230,9 @@ describe("room command model", () => {
     for (const handle of ["Alice", "Bob", "Cora", "Drew"]) {
       state = applyRemembered(state, commandClaimHandle(state, handle));
     }
-    state = applyRemembered(state, commandCreateSeason(state, "Alice"));
+    state = applyRemembered(state, commandCreateGame(state, "Alice"));
     for (const handle of ["Bob", "Cora", "Drew"]) {
-      state = applyRemembered(state, commandJoinSeason(state, handle));
+      state = applyRemembered(state, commandJoinGame(state, handle));
       state = applyRemembered(state, commandSetReady(state, handle, true));
     }
 
@@ -266,35 +242,35 @@ describe("room command model", () => {
     expect(new Set(game.players.map((player) => player.handle))).toEqual(new Set(["Alice", "Bob", "Cora", "Drew"]));
     expect(game.players.find((player) => player.handle === "Alice")?.isHost).toBe(true);
 
-    state = applyRemembered(state, commandStartSeason(state, "Alice"));
+    state = applyRemembered(state, commandStartGame(state, "Alice"));
     expect(commandRandomizeSeats(state, "Alice").ok).toBe(false);
   });
 
-  test("prevents non-holder planting and sprouts atomically after all rows are planted", () => {
+  test("prevents non-holder letter entry and reveals atomically after all rows are submitted", () => {
     let state = startThreePlayerGame();
     const game = activeGame(state)!;
     const round = currentRound(game)!;
-    state = applyRemembered(state, commandChooseField(state, "Alice", round.fieldOptions[0]!));
-    state = applyRemembered(state, commandPlantSeed(state, "Bob", "Bale"));
-    const alicePlant = commandPlantLetters(state, "Alice", new Map([[0, "A"]]));
-    expect(alicePlant.ok).toBe(false);
-    expect(commandPlantLetters(state, "Bob", new Map([[0, "hay"], [1, "S"]])).ok).toBe(false);
-    expect(commandPlantLetters(state, "Bob", new Map([[0, "!"], [1, "S"]])).ok).toBe(false);
+    state = applyRemembered(state, commandChooseCategory(state, "Alice", round.categoryOptions[0]!));
+    state = applyRemembered(state, commandSubmitAnswer(state, "Bob", "Bale"));
+    const aliceSubmit = commandSubmitLetters(state, "Alice", new Map([[0, "A"]]));
+    expect(aliceSubmit.ok).toBe(false);
+    expect(commandSubmitLetters(state, "Bob", new Map([[0, "hay"], [1, "S"]])).ok).toBe(false);
+    expect(commandSubmitLetters(state, "Bob", new Map([[0, "!"], [1, "S"]])).ok).toBe(false);
 
-    state = applyRemembered(state, commandPlantLetters(state, "Bob", new Map([[0, "H"], [1, "T"]])));
-    expect(currentRound(activeGame(state)!)!.phase).toBe("planting");
-    state = applyRemembered(state, commandPlantLetters(state, "Cora", new Map([[2, "C"], [3, "W"]])));
-    const sprouted = currentRound(activeGame(state)!)!;
-    expect(sprouted.phase).toBe("farmer-call");
-    expect(sprouted.entries.every((entry) => entry.sprouted)).toBe(true);
+    state = applyRemembered(state, commandSubmitLetters(state, "Bob", new Map([[0, "H"], [1, "T"]])));
+    expect(currentRound(activeGame(state)!)!.phase).toBe("letter-entry");
+    state = applyRemembered(state, commandSubmitLetters(state, "Cora", new Map([[2, "C"], [3, "W"]])));
+    const revealed = currentRound(activeGame(state)!)!;
+    expect(revealed.phase).toBe("guesser-call");
+    expect(revealed.entries.every((entry) => entry.revealed)).toBe(true);
   });
 
   test("clue entries preserve display handle casing even when a client submits lower-case handle", () => {
     let state = startGameWithHandles(["Alice", "V", "Carrie"]);
-    state = chooseCurrentFieldAndSeed(state, "Bale");
+    state = chooseCurrentCategoryAndAnswer(state, "Bale");
     state = applyRemembered(
       state,
-      commandPlantLetters(
+      commandSubmitLetters(
         state,
         "v",
         new Map([
@@ -308,11 +284,11 @@ describe("room command model", () => {
     expect(round.entries.map((entry) => entry.letter)).toEqual(["C", "B"]);
   });
 
-  test("a period marks the current clue cell as complete and prevents later appends to that row", () => {
-    let state = chooseCurrentFieldAndSeed(startThreePlayerGame(), "Bale");
+  test("a period marks the current clue cell and the row can continue later", () => {
+    let state = chooseCurrentCategoryAndAnswer(startThreePlayerGame(), "Bale");
     state = applyRemembered(
       state,
-      commandPlantLetters(
+      commandSubmitLetters(
         state,
         "Bob",
         new Map<number, { letter: string; endsWord: boolean }>([
@@ -321,52 +297,52 @@ describe("room command model", () => {
         ]),
       ),
     );
-    state = applyRemembered(state, commandPlantLetters(state, "Cora", new Map([[2, "H"], [3, "W"]])));
+    state = applyRemembered(state, commandSubmitLetters(state, "Cora", new Map([[2, "H"], [3, "W"]])));
 
     let round = currentRound(activeGame(state)!)!;
-    expect(round.phase).toBe("farmer-call");
+    expect(round.phase).toBe("guesser-call");
     expect(round.entries.find((entry) => entry.rowIndex === 0)?.endsWord).toBe(true);
     expect(round.entries.find((entry) => entry.rowIndex === 1)?.endsWord).toBe(false);
 
-    state = applyRemembered(state, commandWait(state, "Alice"));
+    state = applyRemembered(state, commandRequestMoreLetters(state, "Alice"));
     round = currentRound(activeGame(state)!)!;
     const nextHolderForEndedRow = round.rows.find((row) => row.rowIndex === 0)!.currentHolderHandle;
-    expect(rowsHeldForClue(round, nextHolderForEndedRow).some((row) => row.rowIndex === 0)).toBe(false);
+    expect(rowsHeldByClueGiver(round, nextHolderForEndedRow).some((row) => row.rowIndex === 0)).toBe(true);
 
-    state = plantCurrentDepth(state, "A");
+    state = submitCurrentDepth(state, "A");
     round = currentRound(activeGame(state)!)!;
-    expect(round.phase).toBe("farmer-call");
-    expect(round.entries.filter((entry) => entry.rowIndex === 0)).toHaveLength(1);
-    expect(round.entries.filter((entry) => entry.depth === 2)).toHaveLength(3);
+    expect(round.phase).toBe("guesser-call");
+    expect(round.entries.filter((entry) => entry.rowIndex === 0)).toHaveLength(2);
+    expect(round.entries.filter((entry) => entry.depth === 2)).toHaveLength(4);
   });
 
   test("a skipped clue cell is a stored blank and stays editable on later depths", () => {
-    let state = chooseCurrentFieldAndSeed(startThreePlayerGame(), "Bale");
-    const badSkipAndLetter = commandPlantLetters(state, "Bob", new Map<number, string | ClueCellInput>([[0, { letter: "C", skipped: true }], [1, "B"]]));
+    let state = chooseCurrentCategoryAndAnswer(startThreePlayerGame(), "Bale");
+    const badSkipAndLetter = commandSubmitLetters(state, "Bob", new Map<number, string | ClueCellInput>([[0, { letter: "C", skipped: true }], [1, "B"]]));
     expect(badSkipAndLetter.ok).toBe(false);
-    const badSkipAndEnd = commandPlantLetters(state, "Bob", new Map<number, string | ClueCellInput>([[0, { skipped: true, endsWord: true }], [1, "B"]]));
+    const badSkipAndEnd = commandSubmitLetters(state, "Bob", new Map<number, string | ClueCellInput>([[0, { skipped: true, endsWord: true }], [1, "B"]]));
     expect(badSkipAndEnd.ok).toBe(false);
 
-    state = applyRemembered(state, commandPlantLetters(state, "Bob", new Map<number, string | ClueCellInput>([[0, { skipped: true }], [1, "B"]])));
-    state = applyRemembered(state, commandPlantLetters(state, "Cora", new Map([[2, "H"], [3, "W"]])));
+    state = applyRemembered(state, commandSubmitLetters(state, "Bob", new Map<number, string | ClueCellInput>([[0, { skipped: true }], [1, "B"]])));
+    state = applyRemembered(state, commandSubmitLetters(state, "Cora", new Map([[2, "H"], [3, "W"]])));
 
     let round = currentRound(activeGame(state)!)!;
-    expect(round.phase).toBe("farmer-call");
+    expect(round.phase).toBe("guesser-call");
     const skipped = round.entries.find((entry) => entry.rowIndex === 0)!;
     expect(skipped.skipped).toBe(true);
     expect(skipped.letter).toBe("");
     expect(skipped.endsWord).toBe(false);
 
-    state = applyRemembered(state, commandWait(state, "Alice"));
+    state = applyRemembered(state, commandRequestMoreLetters(state, "Alice"));
     round = currentRound(activeGame(state)!)!;
     const rowZeroHolder = round.rows.find((row) => row.rowIndex === 0)!.currentHolderHandle;
-    expect(rowsHeldForClue(round, rowZeroHolder).some((row) => row.rowIndex === 0)).toBe(true);
+    expect(rowsHeldByClueGiver(round, rowZeroHolder).some((row) => row.rowIndex === 0)).toBe(true);
     expect(round.entries.filter((entry) => entry.rowIndex === 0)).toHaveLength(1);
 
-    const partialFill = commandPlantLetters(state, rowZeroHolder, new Map<number, string | ClueCellInput>([[0, "T"]]));
+    const partialFill = commandSubmitLetters(state, rowZeroHolder, new Map<number, string | ClueCellInput>([[0, "T"]]));
     expect(partialFill.ok).toBe(false);
 
-    const heldRows = rowsHeldForClue(round, rowZeroHolder);
+    const heldRows = rowsHeldByClueGiver(round, rowZeroHolder);
     const fillEveryBlankAndAddOne = new Map<number, string | ClueCellInput>();
     for (const row of heldRows) {
       fillEveryBlankAndAddOne.set(
@@ -376,7 +352,7 @@ describe("room command model", () => {
           : { letter: "Q" },
       );
     }
-    state = applyRemembered(state, commandPlantLetters(state, rowZeroHolder, fillEveryBlankAndAddOne));
+    state = applyRemembered(state, commandSubmitLetters(state, rowZeroHolder, fillEveryBlankAndAddOne));
     round = currentRound(activeGame(state)!)!;
     const rowZeroEntries = round.entries.filter((entry) => entry.rowIndex === 0).sort((a, b) => a.depth - b.depth);
     expect(rowZeroEntries.map((entry) => entry.letter)).toEqual(["A", "T"]);
@@ -385,41 +361,41 @@ describe("room command model", () => {
     expect(rowZeroEntries.map((entry) => entry.filledAtDepth)).toEqual([2, 2]);
   });
 
-  test("trySprout resolves complete planting after stale clients submit without seeing each other", () => {
+  test("tryReveal resolves complete letter entry after stale clients submit without seeing each other", () => {
     let state = startThreePlayerGame();
     const game = activeGame(state)!;
     const round = currentRound(game)!;
-    state = applyRemembered(state, commandChooseField(state, "Alice", round.fieldOptions[0]!));
-    state = applyRemembered(state, commandPlantSeed(state, "Bob", "Bale"));
+    state = applyRemembered(state, commandChooseCategory(state, "Alice", round.categoryOptions[0]!));
+    state = applyRemembered(state, commandSubmitAnswer(state, "Bob", "Bale"));
 
-    const bobPlant = commandPlantLetters(state, "Bob", new Map([[0, "H"], [1, "S"]]));
-    const coraPlant = commandPlantLetters(state, "Cora", new Map([[2, "C"], [3, "W"]]));
-    expect(bobPlant.ok).toBe(true);
-    expect(coraPlant.ok).toBe(true);
-    if (!bobPlant.ok || !coraPlant.ok) throw new Error("expected stale planting commands");
-    expect(bobPlant.events.map((event) => event.type)).toEqual(["letters.planted"]);
-    expect(coraPlant.events.map((event) => event.type)).toEqual(["letters.planted"]);
+    const bobSubmit = commandSubmitLetters(state, "Bob", new Map([[0, "H"], [1, "S"]]));
+    const coraSubmit = commandSubmitLetters(state, "Cora", new Map([[2, "C"], [3, "W"]]));
+    expect(bobSubmit.ok).toBe(true);
+    expect(coraSubmit.ok).toBe(true);
+    if (!bobSubmit.ok || !coraSubmit.ok) throw new Error("expected stale letter entry commands");
+    expect(bobSubmit.events.map((event) => event.type)).toEqual(["letters.submitted"]);
+    expect(coraSubmit.events.map((event) => event.type)).toEqual(["letters.submitted"]);
 
-    remember([...bobPlant.events, ...coraPlant.events]);
-    state = reduceEvents(state.roomSlug, [...eventsFrom(state), ...bobPlant.events, ...coraPlant.events]);
-    expect(currentRound(activeGame(state)!)!.phase).toBe("planting");
+    remember([...bobSubmit.events, ...coraSubmit.events]);
+    state = reduceEvents(state.roomSlug, [...eventsFrom(state), ...bobSubmit.events, ...coraSubmit.events]);
+    expect(currentRound(activeGame(state)!)!.phase).toBe("letter-entry");
     expect(currentRound(activeGame(state)!)!.entries).toHaveLength(4);
 
-    state = applyRemembered(state, commandTrySprout(state, "Alice"));
-    const sprouted = currentRound(activeGame(state)!)!;
-    expect(sprouted.phase).toBe("farmer-call");
-    expect(sprouted.entries.every((entry) => entry.sprouted)).toBe(true);
+    state = applyRemembered(state, commandTryRevealLetters(state, "Alice"));
+    const revealed = currentRound(activeGame(state)!)!;
+    expect(revealed.phase).toBe("guesser-call");
+    expect(revealed.entries.every((entry) => entry.revealed)).toBe(true);
   });
 
-  test("trySprout resolves simultaneous final plantings at depth five", () => {
-    let state = chooseCurrentFieldAndSeed(startThreePlayerGame(), "Bale");
+  test("tryReveal resolves simultaneous final letter entries at depth five", () => {
+    let state = chooseCurrentCategoryAndAnswer(startThreePlayerGame(), "Bale");
     for (let depth = 1; depth < 5; depth += 1) {
-      state = plantCurrentDepth(state, "B");
-      state = applyRemembered(state, commandWait(state, "Alice"));
+      state = submitCurrentDepth(state, "B");
+      state = applyRemembered(state, commandRequestMoreLetters(state, "Alice"));
     }
 
     const finalRound = currentRound(activeGame(state)!)!;
-    expect(finalRound.phase).toBe("planting");
+    expect(finalRound.phase).toBe("letter-entry");
     expect(finalRound.depth).toBe(5);
 
     const lettersByHolder = new Map<string, Map<number, string>>();
@@ -429,49 +405,49 @@ describe("room command model", () => {
       lettersByHolder.set(row.currentHolderHandle, letters);
     }
 
-    const stalePlantings = [...lettersByHolder].map(([handle, letters]) => commandPlantLetters(state, handle, letters));
-    expect(stalePlantings.every((result) => result.ok)).toBe(true);
-    for (const result of stalePlantings) {
-      if (!result.ok) throw new Error("expected final planting command");
-      expect(result.events.map((event) => event.type)).toEqual(["letters.planted"]);
+    const staleLetterEntries = [...lettersByHolder].map(([handle, letters]) => commandSubmitLetters(state, handle, letters));
+    expect(staleLetterEntries.every((result) => result.ok)).toBe(true);
+    for (const result of staleLetterEntries) {
+      if (!result.ok) throw new Error("expected final letter entry command");
+      expect(result.events.map((event) => event.type)).toEqual(["letters.submitted"]);
     }
 
-    const plantingEvents = stalePlantings.flatMap((result) => (result.ok ? result.events : []));
-    remember(plantingEvents);
-    state = reduceEvents(state.roomSlug, [...eventsFrom(state), ...plantingEvents]);
-    expect(currentRound(activeGame(state)!)!.phase).toBe("planting");
+    const letterEntryEvents = staleLetterEntries.flatMap((result) => (result.ok ? result.events : []));
+    remember(letterEntryEvents);
+    state = reduceEvents(state.roomSlug, [...eventsFrom(state), ...letterEntryEvents]);
+    expect(currentRound(activeGame(state)!)!.phase).toBe("letter-entry");
 
-    state = applyRemembered(state, commandTrySprout(state, "Alice"));
-    const sprouted = currentRound(activeGame(state)!)!;
-    expect(sprouted.phase).toBe("farmer-call");
-    expect(sprouted.depth).toBe(5);
-    expect(sprouted.entries).toHaveLength(20);
-    expect(sprouted.entries.filter((entry) => entry.depth === 5).every((entry) => entry.sprouted)).toBe(true);
-    expect(commandWait(state, "Alice").ok).toBe(false);
+    state = applyRemembered(state, commandTryRevealLetters(state, "Alice"));
+    const revealed = currentRound(activeGame(state)!)!;
+    expect(revealed.phase).toBe("guesser-call");
+    expect(revealed.depth).toBe(5);
+    expect(revealed.entries).toHaveLength(20);
+    expect(revealed.entries.filter((entry) => entry.depth === 5).every((entry) => entry.revealed)).toBe(true);
+    expect(commandRequestMoreLetters(state, "Alice").ok).toBe(false);
   });
 
   test("rejects stale phase events without side effects", () => {
-    let state = plantFirstDepth(startThreePlayerGame());
+    let state = submitFirstDepth(startThreePlayerGame());
     const game = activeGame(state)!;
     const round = currentRound(game)!;
-    const stale = commandWait(state, "Alice");
+    const stale = commandRequestMoreLetters(state, "Alice");
     expect(stale.ok).toBe(true);
-    if (!stale.ok) throw new Error("expected wait event");
+    if (!stale.ok) throw new Error("expected request-more-letters event");
     const staleEvent = { ...stale.events[0]!, expectedPhaseVersion: game.phaseVersion - 1 };
     remember([staleEvent]);
     state = reduceEvents(state.roomSlug, [...eventsFrom(state), staleEvent]);
     const unchanged = currentRound(activeGame(state)!)!;
     expect(unchanged.depth).toBe(round.depth);
-    expect(unchanged.phase).toBe("farmer-call");
+    expect(unchanged.phase).toBe("guesser-call");
   });
 
   test("duplicate action ids do not append duplicate letters", () => {
     let state = startThreePlayerGame();
     const game = activeGame(state)!;
     const round = currentRound(game)!;
-    state = applyRemembered(state, commandChooseField(state, "Alice", round.fieldOptions[0]!));
-    state = applyRemembered(state, commandPlantSeed(state, "Bob", "Bale"));
-    const result = commandPlantLetters(state, "Bob", new Map([[0, "H"], [1, "S"]]));
+    state = applyRemembered(state, commandChooseCategory(state, "Alice", round.categoryOptions[0]!));
+    state = applyRemembered(state, commandSubmitAnswer(state, "Bob", "Bale"));
+    const result = commandSubmitLetters(state, "Bob", new Map([[0, "H"], [1, "S"]]));
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("expected letters");
     remember(result.events);
@@ -480,144 +456,144 @@ describe("room command model", () => {
   });
 
   test("exact guess resolves, records points, advances history, and computes final score", () => {
-    let state = plantFirstDepth(startThreePlayerGame());
+    let state = submitFirstDepth(startThreePlayerGame());
     state = applyRemembered(state, commandGuess(state, "Alice", "bale"));
     let game = activeGame(state)!;
     let round = currentRound(game)!;
-    expect(round.phase).toBe("harvest-recap");
+    expect(round.phase).toBe("round-recap");
     expect(round.accepted).toBe(true);
-    expect(round.ribbon).toBe(20);
+    expect(round.points).toBe(20);
     expect(finalScore(game)).toBe(20);
 
-    state = applyRemembered(state, commandAdvanceAfterRecap(state, "Alice"));
+    state = applyRemembered(state, commandAdvanceRound(state, "Alice"));
     game = activeGame(state)!;
     expect(game.currentRoundNumber).toBe(2);
   });
 
   test("exact guesses handle accents, punctuation, digits, and multiple words conservatively", () => {
-    let state = chooseCurrentFieldAndSeed(startThreePlayerGame(), "Café 24/7 Menu");
-    state = plantCurrentDepth(state, "C");
+    let state = chooseCurrentCategoryAndAnswer(startThreePlayerGame(), "Café 24/7 Menu");
+    state = submitCurrentDepth(state, "C");
     state = applyRemembered(state, commandGuess(state, "Alice", "  cafe\u0301 24/7 menu  "));
     const round = currentRound(activeGame(state)!)!;
-    expect(round.phase).toBe("harvest-recap");
+    expect(round.phase).toBe("round-recap");
     expect(round.accepted).toBe(true);
-    expect(round.ribbon).toBe(20);
+    expect(round.points).toBe(20);
   });
 
-  test("near miss routes to picker adjudication", () => {
-    let state = plantFirstDepth(startThreePlayerGame());
+  test("near miss routes to answer writer judging", () => {
+    let state = submitFirstDepth(startThreePlayerGame());
     state = applyRemembered(state, commandGuess(state, "Alice", "hay bale"));
-    expect(currentRound(activeGame(state)!)!.phase).toBe("adjudication");
-    expect(commandAdjudicate(state, "Alice", true).ok).toBe(false);
-    expect(commandAdjudicate(state, "Cora", true).ok).toBe(false);
-    state = applyRemembered(state, commandAdjudicate(state, "Bob", true));
+    expect(currentRound(activeGame(state)!)!.phase).toBe("guess-judging");
+    expect(commandJudgeGuess(state, "Alice", true).ok).toBe(false);
+    expect(commandJudgeGuess(state, "Cora", true).ok).toBe(false);
+    state = applyRemembered(state, commandJudgeGuess(state, "Bob", true));
     const round = currentRound(activeGame(state)!)!;
-    expect(round.phase).toBe("harvest-recap");
+    expect(round.phase).toBe("round-recap");
     expect(round.accepted).toBe(true);
-    expect(round.ribbon).toBe(20);
+    expect(round.points).toBe(20);
   });
 
-  test("rejected adjudication resolves the round with zero points", () => {
-    let state = plantFirstDepth(startThreePlayerGame());
+  test("rejected judging resolves the round with zero points", () => {
+    let state = submitFirstDepth(startThreePlayerGame());
     state = applyRemembered(state, commandGuess(state, "Alice", "hay bale"));
-    state = applyRemembered(state, commandAdjudicate(state, "Bob", false));
+    state = applyRemembered(state, commandJudgeGuess(state, "Bob", false));
     const round = currentRound(activeGame(state)!)!;
-    expect(round.phase).toBe("harvest-recap");
+    expect(round.phase).toBe("round-recap");
     expect(round.accepted).toBe(false);
-    expect(round.ribbon).toBe(0);
+    expect(round.points).toBe(0);
     expect(commandGuess(state, "Alice", "Bale").ok).toBe(false);
   });
 
-  test("only the guesser can wait, guess, or pass from the guesser decision phase", () => {
-    const state = plantFirstDepth(startThreePlayerGame());
+  test("only the guesser can request more letters, guess, or pass from the guesser decision phase", () => {
+    const state = submitFirstDepth(startThreePlayerGame());
 
-    for (const hand of ["Bob", "Cora"]) {
-      expect(commandWait(state, hand).ok).toBe(false);
-      expect(commandGuess(state, hand, "Bale").ok).toBe(false);
-      expect(commandSpoil(state, hand).ok).toBe(false);
+    for (const clueGiver of ["Bob", "Cora"]) {
+      expect(commandRequestMoreLetters(state, clueGiver).ok).toBe(false);
+      expect(commandGuess(state, clueGiver, "Bale").ok).toBe(false);
+      expect(commandPassRound(state, clueGiver).ok).toBe(false);
     }
 
     expect(commandGuess(state, "Alice", "   ").ok).toBe(false);
-    expect(commandWait(state, "Alice").ok).toBe(true);
+    expect(commandRequestMoreLetters(state, "Alice").ok).toBe(true);
     expect(commandGuess(state, "Alice", "Bale").ok).toBe(true);
-    expect(commandSpoil(state, "Alice").ok).toBe(true);
+    expect(commandPassRound(state, "Alice").ok).toBe(true);
   });
 
   test("correct command-flow guesses award configured points at depths one through five", () => {
     const expectedByDepth = [20, 10, 7, 5, 3];
     for (let targetDepth = 1; targetDepth <= 5; targetDepth += 1) {
-      let state = chooseCurrentFieldAndSeed(startThreePlayerGame(), "Bale");
+      let state = chooseCurrentCategoryAndAnswer(startThreePlayerGame(), "Bale");
       for (let depth = 1; depth <= targetDepth; depth += 1) {
-        state = plantCurrentDepth(state, "B");
+        state = submitCurrentDepth(state, "B");
         if (depth < targetDepth) {
-          state = applyRemembered(state, commandWait(state, "Alice"));
+          state = applyRemembered(state, commandRequestMoreLetters(state, "Alice"));
         }
       }
       state = applyRemembered(state, commandGuess(state, "Alice", "bale"));
       const round = currentRound(activeGame(state)!)!;
       expect(round.depth).toBe(targetDepth);
-      expect(round.ribbon).toBe(expectedByDepth[targetDepth - 1]);
+      expect(round.points).toBe(expectedByDepth[targetDepth - 1]);
     }
   });
 
-  test("wait is rejected at five letters", () => {
-    let state = plantFirstDepth(startThreePlayerGame());
+  test("requesting more letters is rejected at five letters", () => {
+    let state = submitFirstDepth(startThreePlayerGame());
     for (let depth = 2; depth <= 5; depth += 1) {
-      state = applyRemembered(state, commandWait(state, "Alice"));
-      state = plantCurrentDepth(state);
+      state = applyRemembered(state, commandRequestMoreLetters(state, "Alice"));
+      state = submitCurrentDepth(state);
     }
     expect(currentRound(activeGame(state)!)!.depth).toBe(5);
-    expect(commandWait(state, "Alice").ok).toBe(false);
-    state = applyRemembered(state, commandSpoil(state, "Alice"));
-    expect(currentRound(activeGame(state)!)!.ribbon).toBe(0);
+    expect(commandRequestMoreLetters(state, "Alice").ok).toBe(false);
+    state = applyRemembered(state, commandPassRound(state, "Alice"));
+    expect(currentRound(activeGame(state)!)!.points).toBe(0);
   });
 
-  test("simultaneous Guess and Wait resolves exactly one transition", () => {
-    let state = plantFirstDepth(startThreePlayerGame());
+  test("simultaneous Guess and reveal more letters resolves exactly one transition", () => {
+    let state = submitFirstDepth(startThreePlayerGame());
     const game = activeGame(state)!;
-    const wait = commandWait(state, "Alice");
+    const requestMoreLetters = commandRequestMoreLetters(state, "Alice");
     const guess = commandGuess(state, "Alice", "Bale");
-    expect(wait.ok).toBe(true);
+    expect(requestMoreLetters.ok).toBe(true);
     expect(guess.ok).toBe(true);
-    if (!wait.ok || !guess.ok) throw new Error("expected both commands");
+    if (!requestMoreLetters.ok || !guess.ok) throw new Error("expected both commands");
 
-    const sameMoment = Math.max(wait.events[0]!.createdAt, guess.events[0]!.createdAt);
+    const sameMoment = Math.max(requestMoreLetters.events[0]!.createdAt, guess.events[0]!.createdAt);
     const raced = [
       { ...guess.events[0]!, createdAt: sameMoment },
-      { ...wait.events[0]!, createdAt: sameMoment },
+      { ...requestMoreLetters.events[0]!, createdAt: sameMoment },
     ];
     remember(raced);
     state = reduceEvents(state.roomSlug, [...eventsFrom(state), ...raced]);
     const round = currentRound(activeGame(state)!)!;
-    expect(["harvest-recap", "planting"]).toContain(round.phase);
-    expect(round.phase === "harvest-recap" ? round.ribbon : round.depth).toBe(round.phase === "harvest-recap" ? 20 : 2);
+    expect(["round-recap", "letter-entry"]).toContain(round.phase);
+    expect(round.phase === "round-recap" ? round.points : round.depth).toBe(round.phase === "round-recap" ? 20 : 2);
   });
 
   test("host can pause, resume, transfer host, and void an active round", () => {
     let state = startThreePlayerGame();
-    state = applyRemembered(state, commandPauseSeason(state, "Alice"));
+    state = applyRemembered(state, commandPauseGame(state, "Alice"));
     expect(activeGame(state)!.pausedAt).toBeNumber();
-    expect(commandChooseField(state, "Alice", currentRound(activeGame(state)!)!.fieldOptions[0]!).ok).toBe(false);
+    expect(commandChooseCategory(state, "Alice", currentRound(activeGame(state)!)!.categoryOptions[0]!).ok).toBe(false);
 
     state = applyRemembered(state, commandTransferHost(state, "Alice", "Bob"));
     expect(activeGame(state)!.hostHandle).toBe("Bob");
-    expect(commandResumeSeason(state, "Alice").ok).toBe(false);
-    state = applyRemembered(state, commandResumeSeason(state, "Bob"));
+    expect(commandResumeGame(state, "Alice").ok).toBe(false);
+    state = applyRemembered(state, commandResumeGame(state, "Bob"));
     expect(activeGame(state)!.pausedAt).toBeUndefined();
 
-    state = applyRemembered(state, commandVoidHarvest(state, "Bob"));
+    state = applyRemembered(state, commandVoidRound(state, "Bob"));
     const game = activeGame(state)!;
     const round = currentRound(game)!;
     expect(round.status).toBe("void");
-    expect(round.ribbon).toBe(0);
-    expect(game.ribbons).toEqual([0]);
+    expect(round.points).toBe(0);
+    expect(game.roundPoints).toEqual([0]);
 
-    state = applyRemembered(state, commandAdvanceAfterRecap(state, "Bob"));
+    state = applyRemembered(state, commandAdvanceRound(state, "Bob"));
     const advanced = activeGame(state)!;
-    expect(advanced.ribbons).toEqual([0]);
+    expect(advanced.roundPoints).toEqual([0]);
     expect(advanced.rounds[0]?.status).toBe("void");
     expect(currentRound(advanced)?.roundNumber).toBe(2);
-    expect(currentRound(advanced)?.phase).toBe("field-choice");
+    expect(currentRound(advanced)?.phase).toBe("category-choice");
   });
 
   test("a seated player can claim host only after the current host is offline", () => {
@@ -640,16 +616,16 @@ describe("room command model", () => {
     for (let i = 0; i < 6; i += 1) {
       state = resolveCurrentRoundExactly(state);
       const game = activeGame(state)!;
-      state = applyRemembered(state, commandAdvanceAfterRecap(state, game.hostHandle));
+      state = applyRemembered(state, commandAdvanceRound(state, game.hostHandle));
     }
     expect(activeGame(state)?.status).toBe("complete");
     const complete = state.games.find((game) => game.status === "complete")!;
     expect(complete.rounds).toHaveLength(6);
-    expect(complete.ribbons).toEqual([20, 20, 20, 20, 20, 20]);
+    expect(complete.roundPoints).toEqual([20, 20, 20, 20, 20, 20]);
     expect(finalScore(complete)).toBe(100);
     expect(complete.completedAt).toBeNumber();
 
-    state = applyRemembered(state, commandCreateSeason(state, "Alice"));
+    state = applyRemembered(state, commandCreateGame(state, "Alice"));
     const rematch = activeGame(state)!;
     expect(rematch.status).toBe("lobby");
     expect(rematch.id).not.toBe(complete.id);

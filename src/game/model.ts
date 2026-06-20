@@ -1,5 +1,5 @@
 import { DEFAULT_PACK_ID, RULES_VERSION } from "../config";
-import { fieldLabel, pickFieldOptions } from "../content/fields";
+import { categoryLabel, pickCategoryOptions } from "../content/categories";
 import { assignmentsForDepth, rolesForRound, type PlayerSeat } from "./rotation";
 import { finalScoreFromPoints, isValidLetter, normalizeGuess, pointsForDepth, roundsForPlayerCount } from "./rules";
 import type {
@@ -13,7 +13,7 @@ import type {
   RoomState,
   Round,
   Row,
-  SowsEarEvent,
+  GameEvent,
 } from "./types";
 
 export const HOST_RECOVERY_OFFLINE_MS = 45000;
@@ -58,13 +58,13 @@ export function playerForHandle(game: Game, handle: string): GamePlayer | undefi
   return game.players.find((player) => player.normalizedHandle === normalizedHandle);
 }
 
-export function roleForHandle(game: Game, handle: string): "guesser" | "picker" | "cluer" | "none" {
+export function roleForHandle(game: Game, handle: string): "guesser" | "answerWriter" | "clueGiver" | "none" {
   const round = currentRound(game);
   const normalizedHandle = normalizeHandle(handle);
   if (!round) return "none";
-  if (normalizeHandle(round.farmerHandle) === normalizedHandle) return "guesser";
-  if (normalizeHandle(round.sowerHandle) === normalizedHandle) return "picker";
-  if (playerForHandle(game, handle)) return "cluer";
+  if (normalizeHandle(round.guesserHandle) === normalizedHandle) return "guesser";
+  if (normalizeHandle(round.answerWriterHandle) === normalizedHandle) return "answerWriter";
+  if (playerForHandle(game, handle)) return "clueGiver";
   return "none";
 }
 
@@ -72,12 +72,10 @@ export function displayHandleForGame(game: Game, handle: string): string {
   return playerForHandle(game, handle)?.handle ?? cleanHandle(handle);
 }
 
-export function rowEndedBeforeDepth(round: Round, rowIndex: number, depth: number): boolean {
-  return round.entries.some((entry) => entry.rowIndex === rowIndex && entry.depth < depth && entry.endsWord);
-}
-
 export function rowIsComplete(round: Round, rowIndex: number): boolean {
-  return round.entries.some((entry) => entry.rowIndex === rowIndex && entry.endsWord);
+  void round;
+  void rowIndex;
+  return false;
 }
 
 export function rowEntriesThroughDepth(round: Round, rowIndex: number, depth = round.depth): ClueEntry[] {
@@ -98,10 +96,10 @@ export function trailingBlankEntriesForRow(round: Round, rowIndex: number, befor
 }
 
 export function activeRowsForDepth(round: Round): Row[] {
-  return round.rows.filter((row) => !rowEndedBeforeDepth(round, row.rowIndex, round.depth));
+  return round.rows;
 }
 
-export function rowsHeldForClue(round: Round, handle: string): Row[] {
+export function rowsHeldByClueGiver(round: Round, handle: string): Row[] {
   const normalizedHandle = normalizeHandle(handle);
   return activeRowsForDepth(round).filter(
     (row) =>
@@ -110,7 +108,7 @@ export function rowsHeldForClue(round: Round, handle: string): Row[] {
   );
 }
 
-export function reduceEvents(roomSlug: string, events: SowsEarEvent[]): RoomState {
+export function reduceEvents(roomSlug: string, events: GameEvent[]): RoomState {
   const state = emptyRoom(roomSlug);
   const ordered = [...events]
     .filter((event) => event.roomSlug === roomSlug)
@@ -122,7 +120,7 @@ export function reduceEvents(roomSlug: string, events: SowsEarEvent[]): RoomStat
   return state;
 }
 
-function applyEvent(state: RoomState, event: SowsEarEvent): void {
+function applyEvent(state: RoomState, event: GameEvent): void {
   if (state.appliedActionIds.has(event.actionId)) return;
   state.appliedActionIds.add(event.actionId);
 
@@ -142,26 +140,7 @@ function applyEvent(state: RoomState, event: SowsEarEvent): void {
     return;
   }
 
-  if (event.type === "handle.seen") {
-    const handle = stringPayload(event, "handle");
-    const normalizedHandle = normalizeHandle(handle);
-    const existing = state.handles.find((item) => item.normalizedHandle === normalizedHandle);
-    if (existing) {
-      existing.lastSeenAt = Math.max(existing.lastSeenAt, event.createdAt);
-      existing.displayName = existing.displayName || handle;
-    } else {
-      state.handles.push({
-        handle,
-        normalizedHandle,
-        displayName: handle,
-        lastSeenAt: event.createdAt,
-        createdAt: event.createdAt,
-      });
-    }
-    return;
-  }
-
-  if (event.type === "season.created") {
+  if (event.type === "game.created") {
     const gameId = stringPayload(event, "gameId");
     if (state.games.some((game) => game.id === gameId)) return;
     const hostHandle = stringPayload(event, "hostHandle");
@@ -174,12 +153,12 @@ function applyEvent(state: RoomState, event: SowsEarEvent): void {
       players: [],
       rounds: [],
       currentRoundNumber: 0,
-      totalHarvests: 0,
+      totalRounds: 0,
       phaseVersion: 0,
       playerCount: 0,
-      fieldPackId: stringPayload(event, "fieldPackId") || DEFAULT_PACK_ID,
+      categoryPackId: stringPayload(event, "categoryPackId") || DEFAULT_PACK_ID,
       rulesVersion: stringPayload(event, "rulesVersion") || RULES_VERSION,
-      ribbons: [],
+      roundPoints: [],
       createdAt: event.createdAt,
       updatedAt: event.createdAt,
     };
@@ -239,15 +218,15 @@ function applyEvent(state: RoomState, event: SowsEarEvent): void {
       game.updatedAt = event.createdAt;
       return;
     }
-    case "season.started": {
+    case "game.started": {
       if (game.status !== "lobby") return;
       const players = orderedPlayers(game).filter((player) => player.ready);
       if (players.length < 3 || players.length > 8) return;
       game.players = players.map((player, seatNumber) => ({ ...player, seatNumber, ready: true }));
       game.status = "active";
-      game.phase = "field-choice";
+      game.phase = "category-choice";
       game.currentRoundNumber = 1;
-      game.totalHarvests = roundsForPlayerCount(players.length);
+      game.totalRounds = roundsForPlayerCount(players.length);
       game.phaseVersion += 1;
       const round = makeRound(game, 1, event.createdAt);
       game.rounds.push(round);
@@ -256,35 +235,35 @@ function applyEvent(state: RoomState, event: SowsEarEvent): void {
       game.updatedAt = event.createdAt;
       return;
     }
-    case "field.chosen": {
+    case "category.chosen": {
       const round = roundForEvent(game, event);
-      if (!round || round.phase !== "field-choice") return;
-      const fieldId = stringPayload(event, "fieldId");
-      if (!round.fieldOptions.includes(fieldId)) return;
-      round.fieldId = fieldId;
-      round.fieldLabel = fieldLabel(fieldId);
-      round.phase = "seed";
+      if (!round || round.phase !== "category-choice") return;
+      const categoryId = stringPayload(event, "categoryId");
+      if (!round.categoryOptions.includes(categoryId)) return;
+      round.categoryId = categoryId;
+      round.categoryLabel = categoryLabel(categoryId);
+      round.phase = "answer-entry";
       round.phaseVersion += 1;
       round.updatedAt = event.createdAt;
-      bumpGame(game, "seed", event.createdAt);
+      bumpGame(game, "answer-entry", event.createdAt);
       return;
     }
-    case "seed.planted": {
+    case "answer.submitted": {
       const round = roundForEvent(game, event);
-      if (!round || round.phase !== "seed") return;
-      round.seedRaw = stringPayload(event, "seedRaw");
-      round.seedNorm = normalizeGuess(round.seedRaw);
+      if (!round || round.phase !== "answer-entry") return;
+      round.answerRaw = stringPayload(event, "answerRaw");
+      round.answerNorm = normalizeGuess(round.answerRaw);
       round.depth = 1;
       round.rows = rowsFor(game, round.roundNumber, 1);
-      round.phase = "planting";
+      round.phase = "letter-entry";
       round.phaseVersion += 1;
       round.updatedAt = event.createdAt;
-      bumpGame(game, "planting", event.createdAt);
+      bumpGame(game, "letter-entry", event.createdAt);
       return;
     }
-    case "letters.planted": {
+    case "letters.submitted": {
       const round = roundForEvent(game, event);
-      if (!round || round.phase !== "planting") return;
+      if (!round || round.phase !== "letter-entry") return;
       const entries = arrayPayload<ClueEntry>(event, "entries");
       for (const entry of entries) {
         const existing = round.entries.find((item) => entryKey(item) === entryKey(entry));
@@ -293,7 +272,7 @@ function applyEvent(state: RoomState, event: SowsEarEvent): void {
           letter: entry.letter ?? "",
           skipped: Boolean(entry.skipped),
           endsWord: Boolean(entry.endsWord) && !entry.skipped,
-          sprouted: false,
+          revealed: false,
           filledAtDepth: typeof entry.filledAtDepth === "number" ? entry.filledAtDepth : entry.depth,
           createdAt: event.createdAt,
         };
@@ -307,64 +286,63 @@ function applyEvent(state: RoomState, event: SowsEarEvent): void {
       round.updatedAt = event.createdAt;
       return;
     }
-    case "rows.sprouted": {
+    case "letters.revealed": {
       const round = roundForEvent(game, event);
-      if (!round || round.phase !== "planting") return;
+      if (!round || round.phase !== "letter-entry") return;
       for (const entry of round.entries) {
-        if (entry.depth <= round.depth) entry.sprouted = true;
+        if (entry.depth <= round.depth) entry.revealed = true;
       }
-      round.phase = "farmer-call";
+      round.phase = "guesser-call";
       round.phaseVersion += 1;
       round.updatedAt = event.createdAt;
-      bumpGame(game, "farmer-call", event.createdAt);
+      bumpGame(game, "guesser-call", event.createdAt);
       return;
     }
-    case "farmer.waited": {
+    case "more-letters.requested": {
       const round = roundForEvent(game, event);
-      if (!round || round.phase !== "farmer-call" || round.depth >= 5) return;
-      if (round.rows.every((row) => rowIsComplete(round, row.rowIndex))) return;
+      if (!round || round.phase !== "guesser-call" || round.depth >= 5) return;
       round.depth += 1;
       round.rows = rowsFor(game, round.roundNumber, round.depth);
-      round.phase = "planting";
+      round.phase = "letter-entry";
       round.phaseVersion += 1;
       round.updatedAt = event.createdAt;
-      bumpGame(game, "planting", event.createdAt);
+      bumpGame(game, "letter-entry", event.createdAt);
       return;
     }
     case "guess.submitted": {
       const round = roundForEvent(game, event);
-      if (!round || round.phase !== "farmer-call") return;
+      if (!round || round.phase !== "guesser-call") return;
       round.guessRaw = stringPayload(event, "guessRaw");
       round.guessNorm = normalizeGuess(round.guessRaw);
-      const exact = round.seedNorm === round.guessNorm;
+      const exact = round.answerNorm === round.guessNorm;
       if (exact) {
         resolveRound(game, round, true, event.createdAt);
       } else {
-        round.phase = "adjudication";
+        round.phase = "guess-judging";
         round.phaseVersion += 1;
         round.updatedAt = event.createdAt;
-        bumpGame(game, "adjudication", event.createdAt);
+        bumpGame(game, "guess-judging", event.createdAt);
       }
       return;
     }
-    case "guess.adjudicated": {
+    case "guess.judged": {
       const round = roundForEvent(game, event);
-      if (!round || round.phase !== "adjudication") return;
+      if (!round || round.phase !== "guess-judging") return;
       resolveRound(game, round, Boolean(event.payload.accepted), event.createdAt);
       return;
     }
-    case "harvest.spoiled": {
+    case "round.passed": {
       const round = roundForEvent(game, event);
-      if (!round || round.phase !== "farmer-call") return;
+      if (!round || round.phase !== "guesser-call") return;
       resolveRound(game, round, false, event.createdAt);
       return;
     }
-    case "next-harvest.started": {
+    case "next-round.started": {
       const current = currentRound(game);
       if (!current || (current.status !== "resolved" && current.status !== "void") || game.status !== "active") return;
       const nextNumber = current.roundNumber + 1;
-      if (nextNumber > game.totalHarvests) return;
-      game.phase = "field-choice";
+      if (nextNumber > game.totalRounds) return;
+      game.phase = "category-choice";
       game.currentRoundNumber = nextNumber;
       game.phaseVersion += 1;
       const round = makeRound(game, nextNumber, event.createdAt);
@@ -373,7 +351,7 @@ function applyEvent(state: RoomState, event: SowsEarEvent): void {
       game.updatedAt = event.createdAt;
       return;
     }
-    case "season.completed": {
+    case "game.completed": {
       if (game.status !== "active") return;
       game.status = "complete";
       game.phase = "final";
@@ -382,25 +360,25 @@ function applyEvent(state: RoomState, event: SowsEarEvent): void {
       game.updatedAt = event.createdAt;
       return;
     }
-    case "harvest.voided": {
+    case "round.voided": {
       const round = roundForEvent(game, event);
       if (!round || game.status !== "active" || round.status !== "active") return;
       round.status = "void";
-      round.phase = "harvest-recap";
-      round.ribbon = 0;
+      round.phase = "round-recap";
+      round.points = 0;
       round.resolvedAt = event.createdAt;
-      game.ribbons.push(0);
-      bumpGame(game, "harvest-recap", event.createdAt);
+      game.roundPoints.push(0);
+      bumpGame(game, "round-recap", event.createdAt);
       return;
     }
-    case "season.paused": {
+    case "game.paused": {
       if (game.status !== "active" || game.pausedAt) return;
       game.pausedAt = event.createdAt;
       game.phaseVersion += 1;
       game.updatedAt = event.createdAt;
       return;
     }
-    case "season.resumed": {
+    case "game.resumed": {
       if (!game.pausedAt) return;
       delete game.pausedAt;
       game.phaseVersion += 1;
@@ -424,28 +402,27 @@ function applyEvent(state: RoomState, event: SowsEarEvent): void {
   }
 }
 
-function eventRank(type: SowsEarEvent["type"]): number {
+function eventRank(type: GameEvent["type"]): number {
   return [
     "handle.claimed",
-    "handle.seen",
-    "season.created",
+    "game.created",
     "player.joined",
     "player.ready-set",
     "seats.reordered",
-    "season.started",
-    "field.chosen",
-    "seed.planted",
-    "letters.planted",
-    "rows.sprouted",
-    "farmer.waited",
+    "game.started",
+    "category.chosen",
+    "answer.submitted",
+    "letters.submitted",
+    "letters.revealed",
+    "more-letters.requested",
     "guess.submitted",
-    "guess.adjudicated",
-    "harvest.spoiled",
-    "next-harvest.started",
-    "season.completed",
-    "harvest.voided",
-    "season.paused",
-    "season.resumed",
+    "guess.judged",
+    "round.passed",
+    "next-round.started",
+    "game.completed",
+    "round.voided",
+    "game.paused",
+    "game.resumed",
     "host.transferred",
   ].indexOf(type);
 }
@@ -456,11 +433,11 @@ function makeRound(game: Game, roundNumber: number, now: number): Round {
   return {
     id,
     roundNumber,
-    phase: "field-choice",
+    phase: "category-choice",
     status: "active",
-    farmerHandle: roles.farmer.nickname,
-    sowerHandle: roles.sower.nickname,
-    fieldOptions: pickFieldOptions(game.id, roundNumber),
+    guesserHandle: roles.guesser.nickname,
+    answerWriterHandle: roles.answerWriter.nickname,
+    categoryOptions: pickCategoryOptions(game.id, roundNumber),
     depth: 0,
     phaseVersion: 0,
     rows: [],
@@ -505,26 +482,26 @@ function bumpGame(game: Game, phase: GamePhase, now: number): void {
 
 function resolveRound(game: Game, round: Round, accepted: boolean, now: number): void {
   round.accepted = accepted;
-  round.ribbon = pointsForDepth(accepted, round.depth);
+  round.points = pointsForDepth(accepted, round.depth);
   round.status = "resolved";
-  round.phase = "harvest-recap";
+  round.phase = "round-recap";
   round.phaseVersion += 1;
   round.resolvedAt = now;
   round.updatedAt = now;
-  game.ribbons = [...game.ribbons, round.ribbon];
-  bumpGame(game, "harvest-recap", now);
+  game.roundPoints = [...game.roundPoints, round.points];
+  bumpGame(game, "round-recap", now);
 }
 
-function roundForEvent(game: Game, event: SowsEarEvent): Round | undefined {
+function roundForEvent(game: Game, event: GameEvent): Round | undefined {
   return event.roundId ? game.rounds.find((round) => round.id === event.roundId) : currentRound(game);
 }
 
-function stringPayload(event: SowsEarEvent, key: string): string {
+function stringPayload(event: GameEvent, key: string): string {
   const value = event.payload[key];
   return typeof value === "string" ? value : "";
 }
 
-function arrayPayload<T>(event: SowsEarEvent, key: string): T[] {
+function arrayPayload<T>(event: GameEvent, key: string): T[] {
   const value = event.payload[key];
   return Array.isArray(value) ? (value as T[]) : [];
 }
@@ -547,12 +524,12 @@ function nextEventAt(): number {
 
 export function eventOf(
   state: RoomState,
-  type: SowsEarEvent["type"],
+  type: GameEvent["type"],
   actorHandle: string,
   payload: Record<string, unknown>,
   options: { gameId?: string; roundId?: string; expectedPhaseVersion?: number; actionId?: string } = {},
-): SowsEarEvent {
-  const event: SowsEarEvent = {
+): GameEvent {
+  const event: GameEvent = {
     actionId: options.actionId ?? makeActionId(type),
     type,
     roomSlug: state.roomSlug,
@@ -580,21 +557,7 @@ export function commandClaimHandle(state: RoomState, handleInput: string): Comma
   };
 }
 
-export function commandMarkHandleSeen(state: RoomState, handleInput: string): CommandResult {
-  const handle = cleanHandle(handleInput);
-  if (!handle) return { ok: false, error: "Enter a handle." };
-  return {
-    ok: true,
-    events: [
-      eventOf(state, "handle.seen", handle, {
-        handle,
-        normalizedHandle: normalizeHandle(handle),
-      }),
-    ],
-  };
-}
-
-export function commandCreateSeason(state: RoomState, handle: string): CommandResult {
+export function commandCreateGame(state: RoomState, handle: string): CommandResult {
   if (!state.handles.some((item) => item.normalizedHandle === normalizeHandle(handle))) {
     return { ok: false, error: "Enter a handle before starting a game." };
   }
@@ -605,9 +568,9 @@ export function commandCreateSeason(state: RoomState, handle: string): CommandRe
   const gameId = `${state.roomSlug}:game:${Date.now().toString(36)}`;
   const base = eventOf(
     state,
-    "season.created",
+    "game.created",
     handle,
-    { gameId, hostHandle: handle, rulesVersion: RULES_VERSION, fieldPackId: DEFAULT_PACK_ID },
+    { gameId, hostHandle: handle, rulesVersion: RULES_VERSION, categoryPackId: DEFAULT_PACK_ID },
     { gameId },
   );
   const join = eventOf(
@@ -620,7 +583,7 @@ export function commandCreateSeason(state: RoomState, handle: string): CommandRe
   return { ok: true, events: [base, join] };
 }
 
-export function commandJoinSeason(state: RoomState, handle: string): CommandResult {
+export function commandJoinGame(state: RoomState, handle: string): CommandResult {
   const game = activeGame(state);
   if (!game || game.status !== "lobby") return { ok: false, error: "There is no lobby to join." };
   if (playerForHandle(game, handle)) return { ok: true, events: [] };
@@ -706,7 +669,7 @@ export function commandRandomizeSeats(state: RoomState, handle: string): Command
   return commandReorderSeats(state, handle, shuffled);
 }
 
-export function commandStartSeason(state: RoomState, handle: string): CommandResult {
+export function commandStartGame(state: RoomState, handle: string): CommandResult {
   const game = activeGame(state);
   if (!game || game.status !== "lobby") return { ok: false, error: "There is no lobby to start." };
   if (game.pausedAt) return { ok: false, error: "The game is paused." };
@@ -718,61 +681,61 @@ export function commandStartSeason(state: RoomState, handle: string): CommandRes
   return {
     ok: true,
     events: [
-      eventOf(state, "season.started", handle, {}, { gameId: game.id, expectedPhaseVersion: game.phaseVersion }),
+      eventOf(state, "game.started", handle, {}, { gameId: game.id, expectedPhaseVersion: game.phaseVersion }),
     ],
   };
 }
 
-export function commandChooseField(state: RoomState, handle: string, fieldId: string): CommandResult {
+export function commandChooseCategory(state: RoomState, handle: string, categoryId: string): CommandResult {
   const game = activeGame(state);
   const round = game ? currentRound(game) : undefined;
-  if (!game || !round || round.phase !== "field-choice") return { ok: false, error: "No category is being chosen." };
+  if (!game || !round || round.phase !== "category-choice") return { ok: false, error: "No category is being chosen." };
   if (game.pausedAt) return { ok: false, error: "The game is paused." };
-  if (normalizeHandle(round.farmerHandle) !== normalizeHandle(handle)) return { ok: false, error: "Only the guesser chooses." };
-  if (!round.fieldOptions.includes(fieldId)) return { ok: false, error: "Choose one of the offered categories." };
+  if (normalizeHandle(round.guesserHandle) !== normalizeHandle(handle)) return { ok: false, error: "Only the guesser chooses." };
+  if (!round.categoryOptions.includes(categoryId)) return { ok: false, error: "Choose one of the offered categories." };
   return {
     ok: true,
     events: [
       eventOf(
         state,
-        "field.chosen",
+        "category.chosen",
         handle,
-        { fieldId },
+        { categoryId },
         { gameId: game.id, roundId: round.id, expectedPhaseVersion: game.phaseVersion },
       ),
     ],
   };
 }
 
-export function commandPlantSeed(state: RoomState, handle: string, seedRaw: string): CommandResult {
+export function commandSubmitAnswer(state: RoomState, handle: string, answerRaw: string): CommandResult {
   const game = activeGame(state);
   const round = game ? currentRound(game) : undefined;
-  if (!game || !round || round.phase !== "seed") return { ok: false, error: "No answer is being chosen." };
+  if (!game || !round || round.phase !== "answer-entry") return { ok: false, error: "No answer is being chosen." };
   if (game.pausedAt) return { ok: false, error: "The game is paused." };
-  if (normalizeHandle(round.sowerHandle) !== normalizeHandle(handle)) return { ok: false, error: "Only the picker chooses the answer." };
-  const seed = seedRaw.trim();
-  if (!seed) return { ok: false, error: "Enter an answer." };
+  if (normalizeHandle(round.answerWriterHandle) !== normalizeHandle(handle)) return { ok: false, error: "Only the answer writer chooses the answer." };
+  const answer = answerRaw.trim();
+  if (!answer) return { ok: false, error: "Enter an answer." };
   return {
     ok: true,
     events: [
       eventOf(
         state,
-        "seed.planted",
+        "answer.submitted",
         handle,
-        { seedRaw: seed, seedNorm: normalizeGuess(seed) },
+        { answerRaw: answer, answerNorm: normalizeGuess(answer) },
         { gameId: game.id, roundId: round.id, expectedPhaseVersion: game.phaseVersion },
       ),
     ],
   };
 }
 
-export function commandPlantLetters(state: RoomState, handle: string, lettersByRow: Map<number, string | ClueCellInput>): CommandResult {
+export function commandSubmitLetters(state: RoomState, handle: string, lettersByRow: Map<number, string | ClueCellInput>): CommandResult {
   const game = activeGame(state);
   const round = game ? currentRound(game) : undefined;
-  if (!game || !round || round.phase !== "planting") return { ok: false, error: "Rows are not being tended." };
+  if (!game || !round || round.phase !== "letter-entry") return { ok: false, error: "Letters are not being submitted now." };
   if (game.pausedAt) return { ok: false, error: "The game is paused." };
-  const heldRows = rowsHeldForClue(round, handle);
-  if (!heldRows.length) return { ok: false, error: "You do not hold a Row right now." };
+  const heldRows = rowsHeldByClueGiver(round, handle);
+  if (!heldRows.length) return { ok: false, error: "You do not have a row right now." };
   const entries: ClueEntry[] = [];
   const canonicalHandle = displayHandleForGame(game, handle);
   for (const row of heldRows) {
@@ -797,7 +760,7 @@ export function commandPlantLetters(state: RoomState, handle: string, lettersByR
         letter: "",
         skipped: true,
         endsWord: false,
-        sprouted: false,
+        revealed: false,
         filledAtDepth: round.depth,
         createdAt: Date.now(),
       });
@@ -822,7 +785,7 @@ export function commandPlantLetters(state: RoomState, handle: string, lettersByR
         letter: normalizedLetter,
         skipped: false,
         endsWord: depth === round.depth && endsWord,
-        sprouted: false,
+        revealed: false,
         filledAtDepth: round.depth,
         createdAt: Date.now(),
       });
@@ -830,7 +793,7 @@ export function commandPlantLetters(state: RoomState, handle: string, lettersByR
   }
   const baseEvent = eventOf(
     state,
-    "letters.planted",
+    "letters.submitted",
     handle,
     { entries },
     { gameId: game.id, roundId: round.id, expectedPhaseVersion: game.phaseVersion },
@@ -838,13 +801,13 @@ export function commandPlantLetters(state: RoomState, handle: string, lettersByR
   const existingKeys = new Set(round.entries.map(entryKey));
   const combinedKeys = new Set([...existingKeys, ...entries.map(entryKey)]);
   const expectedRows = activeRowsForDepth(round);
-  const shouldSprout = expectedRows.every((row) => combinedKeys.has(`${row.rowIndex}:${round.depth}`));
+  const shouldReveal = expectedRows.every((row) => combinedKeys.has(`${row.rowIndex}:${round.depth}`));
   const events = [baseEvent];
-  if (shouldSprout) {
+  if (shouldReveal) {
     events.push(
       eventOf(
         state,
-        "rows.sprouted",
+        "letters.revealed",
         handle,
         { depth: round.depth },
         { gameId: game.id, roundId: round.id, expectedPhaseVersion: game.phaseVersion },
@@ -861,21 +824,21 @@ function normalizedInputCells(input: string | ClueCellInput | undefined, current
   return input.letter ? [{ depth: currentDepth, letter: input.letter }] : [];
 }
 
-export function commandTrySprout(state: RoomState, handle: string): CommandResult {
+export function commandTryRevealLetters(state: RoomState, handle: string): CommandResult {
   const game = activeGame(state);
   const round = game ? currentRound(game) : undefined;
-  if (!game || !round || round.phase !== "planting") return { ok: true, events: [] };
+  if (!game || !round || round.phase !== "letter-entry") return { ok: true, events: [] };
   if (game.pausedAt) return { ok: true, events: [] };
   const entriesAtDepth = round.entries.filter((entry) => entry.depth === round.depth);
-  if (entriesAtDepth.every((entry) => entry.sprouted)) return { ok: true, events: [] };
-  const plantedRows = new Set(entriesAtDepth.map((entry) => entry.rowIndex));
-  if (!activeRowsForDepth(round).every((row) => plantedRows.has(row.rowIndex))) return { ok: true, events: [] };
+  if (entriesAtDepth.every((entry) => entry.revealed)) return { ok: true, events: [] };
+  const submittedRows = new Set(entriesAtDepth.map((entry) => entry.rowIndex));
+  if (!activeRowsForDepth(round).every((row) => submittedRows.has(row.rowIndex))) return { ok: true, events: [] };
   return {
     ok: true,
     events: [
       eventOf(
         state,
-        "rows.sprouted",
+        "letters.revealed",
         handle,
         { depth: round.depth },
         { gameId: game.id, roundId: round.id, expectedPhaseVersion: game.phaseVersion },
@@ -884,20 +847,17 @@ export function commandTrySprout(state: RoomState, handle: string): CommandResul
   };
 }
 
-export function commandWait(state: RoomState, handle: string): CommandResult {
+export function commandRequestMoreLetters(state: RoomState, handle: string): CommandResult {
   const game = activeGame(state);
   const round = game ? currentRound(game) : undefined;
-  if (!game || !round || round.phase !== "farmer-call") return { ok: false, error: "The guesser is not choosing now." };
+  if (!game || !round || round.phase !== "guesser-call") return { ok: false, error: "The guesser is not choosing now." };
   if (game.pausedAt) return { ok: false, error: "The game is paused." };
-  if (normalizeHandle(round.farmerHandle) !== normalizeHandle(handle)) return { ok: false, error: "Only the guesser can wait." };
+  if (normalizeHandle(round.guesserHandle) !== normalizeHandle(handle)) return { ok: false, error: "Only the guesser can request more letters." };
   if (round.depth >= 5) return { ok: false, error: "At five cells, the guesser must guess or pass." };
-  if (round.rows.every((row) => rowIsComplete(round, row.rowIndex))) {
-    return { ok: false, error: "All rows are complete. Guess or pass." };
-  }
   return {
     ok: true,
     events: [
-      eventOf(state, "farmer.waited", handle, {}, { gameId: game.id, roundId: round.id, expectedPhaseVersion: game.phaseVersion }),
+      eventOf(state, "more-letters.requested", handle, {}, { gameId: game.id, roundId: round.id, expectedPhaseVersion: game.phaseVersion }),
     ],
   };
 }
@@ -905,9 +865,9 @@ export function commandWait(state: RoomState, handle: string): CommandResult {
 export function commandGuess(state: RoomState, handle: string, guessRaw: string): CommandResult {
   const game = activeGame(state);
   const round = game ? currentRound(game) : undefined;
-  if (!game || !round || round.phase !== "farmer-call") return { ok: false, error: "The guesser is not guessing now." };
+  if (!game || !round || round.phase !== "guesser-call") return { ok: false, error: "The guesser is not guessing now." };
   if (game.pausedAt) return { ok: false, error: "The game is paused." };
-  if (normalizeHandle(round.farmerHandle) !== normalizeHandle(handle)) return { ok: false, error: "Only the guesser can guess." };
+  if (normalizeHandle(round.guesserHandle) !== normalizeHandle(handle)) return { ok: false, error: "Only the guesser can guess." };
   const guess = guessRaw.trim();
   if (!guess) return { ok: false, error: "Enter a Guess." };
   return {
@@ -924,18 +884,18 @@ export function commandGuess(state: RoomState, handle: string, guessRaw: string)
   };
 }
 
-export function commandAdjudicate(state: RoomState, handle: string, accepted: boolean): CommandResult {
+export function commandJudgeGuess(state: RoomState, handle: string, accepted: boolean): CommandResult {
   const game = activeGame(state);
   const round = game ? currentRound(game) : undefined;
-  if (!game || !round || round.phase !== "adjudication") return { ok: false, error: "No Guess is awaiting judgment." };
+  if (!game || !round || round.phase !== "guess-judging") return { ok: false, error: "No Guess is awaiting judgment." };
   if (game.pausedAt) return { ok: false, error: "The game is paused." };
-  if (normalizeHandle(round.sowerHandle) !== normalizeHandle(handle)) return { ok: false, error: "Only the picker adjudicates." };
+  if (normalizeHandle(round.answerWriterHandle) !== normalizeHandle(handle)) return { ok: false, error: "Only the answer writer can judge the guess." };
   return {
     ok: true,
     events: [
       eventOf(
         state,
-        "guess.adjudicated",
+        "guess.judged",
         handle,
         { accepted },
         { gameId: game.id, roundId: round.id, expectedPhaseVersion: game.phaseVersion },
@@ -944,18 +904,18 @@ export function commandAdjudicate(state: RoomState, handle: string, accepted: bo
   };
 }
 
-export function commandSpoil(state: RoomState, handle: string): CommandResult {
+export function commandPassRound(state: RoomState, handle: string): CommandResult {
   const game = activeGame(state);
   const round = game ? currentRound(game) : undefined;
-  if (!game || !round || round.phase !== "farmer-call") return { ok: false, error: "Nothing can be passed now." };
+  if (!game || !round || round.phase !== "guesser-call") return { ok: false, error: "Nothing can be passed now." };
   if (game.pausedAt) return { ok: false, error: "The game is paused." };
-  if (normalizeHandle(round.farmerHandle) !== normalizeHandle(handle)) return { ok: false, error: "Only the guesser can pass." };
+  if (normalizeHandle(round.guesserHandle) !== normalizeHandle(handle)) return { ok: false, error: "Only the guesser can pass." };
   return {
     ok: true,
     events: [
       eventOf(
         state,
-        "harvest.spoiled",
+        "round.passed",
         handle,
         {},
         { gameId: game.id, roundId: round.id, expectedPhaseVersion: game.phaseVersion },
@@ -964,17 +924,17 @@ export function commandSpoil(state: RoomState, handle: string): CommandResult {
   };
 }
 
-export function commandAdvanceAfterRecap(state: RoomState, handle: string): CommandResult {
+export function commandAdvanceRound(state: RoomState, handle: string): CommandResult {
   const game = activeGame(state);
   const round = game ? currentRound(game) : undefined;
-  if (!game || !round || round.phase !== "harvest-recap") return { ok: false, error: "No round recap is ready." };
+  if (!game || !round || round.phase !== "round-recap") return { ok: false, error: "No round recap is ready." };
   if (game.pausedAt) return { ok: false, error: "The game is paused." };
   if (normalizeHandle(game.hostHandle) !== normalizeHandle(handle)) return { ok: false, error: "Only the host advances the game." };
-  if (round.roundNumber >= game.totalHarvests) {
+  if (round.roundNumber >= game.totalRounds) {
     return {
       ok: true,
       events: [
-        eventOf(state, "season.completed", handle, {}, { gameId: game.id, expectedPhaseVersion: game.phaseVersion }),
+        eventOf(state, "game.completed", handle, {}, { gameId: game.id, expectedPhaseVersion: game.phaseVersion }),
       ],
     };
   }
@@ -983,7 +943,7 @@ export function commandAdvanceAfterRecap(state: RoomState, handle: string): Comm
     events: [
       eventOf(
         state,
-        "next-harvest.started",
+        "next-round.started",
         handle,
         {},
         { gameId: game.id, roundId: round.id, expectedPhaseVersion: game.phaseVersion },
@@ -993,28 +953,28 @@ export function commandAdvanceAfterRecap(state: RoomState, handle: string): Comm
 }
 
 export function finalScore(game: Game): number {
-  return finalScoreFromPoints(game.ribbons);
+  return finalScoreFromPoints(game.roundPoints);
 }
 
-export function commandPauseSeason(state: RoomState, handle: string): CommandResult {
+export function commandPauseGame(state: RoomState, handle: string): CommandResult {
   const game = activeGame(state);
   if (!game || game.status !== "active") return { ok: false, error: "There is no active game to pause." };
   if (normalizeHandle(game.hostHandle) !== normalizeHandle(handle)) return { ok: false, error: "Only the host can pause." };
   if (game.pausedAt) return { ok: true, events: [] };
   return {
     ok: true,
-    events: [eventOf(state, "season.paused", handle, {}, { gameId: game.id, expectedPhaseVersion: game.phaseVersion })],
+    events: [eventOf(state, "game.paused", handle, {}, { gameId: game.id, expectedPhaseVersion: game.phaseVersion })],
   };
 }
 
-export function commandResumeSeason(state: RoomState, handle: string): CommandResult {
+export function commandResumeGame(state: RoomState, handle: string): CommandResult {
   const game = activeGame(state);
   if (!game || game.status !== "active") return { ok: false, error: "There is no active game to resume." };
   if (normalizeHandle(game.hostHandle) !== normalizeHandle(handle)) return { ok: false, error: "Only the host can resume." };
   if (!game.pausedAt) return { ok: true, events: [] };
   return {
     ok: true,
-    events: [eventOf(state, "season.resumed", handle, {}, { gameId: game.id, expectedPhaseVersion: game.phaseVersion })],
+    events: [eventOf(state, "game.resumed", handle, {}, { gameId: game.id, expectedPhaseVersion: game.phaseVersion })],
   };
 }
 
@@ -1063,7 +1023,7 @@ export function commandClaimHost(state: RoomState, handle: string, now = Date.no
   };
 }
 
-export function commandVoidHarvest(state: RoomState, handle: string): CommandResult {
+export function commandVoidRound(state: RoomState, handle: string): CommandResult {
   const game = activeGame(state);
   const round = game ? currentRound(game) : undefined;
   if (!game || !round || game.status !== "active") return { ok: false, error: "There is no active round to void." };
@@ -1074,7 +1034,7 @@ export function commandVoidHarvest(state: RoomState, handle: string): CommandRes
     events: [
       eventOf(
         state,
-        "harvest.voided",
+        "round.voided",
         handle,
         {},
         { gameId: game.id, roundId: round.id, expectedPhaseVersion: game.phaseVersion },

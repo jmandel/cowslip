@@ -1,30 +1,30 @@
-export const RIBBON_BY_DEPTH = [0, 20, 10, 7, 5, 3] as const;
+export const POINTS_BY_DEPTH = [0, 20, 10, 7, 5, 3] as const;
 
 export type Depth = 1 | 2 | 3 | 4 | 5;
 
-export type SowsEarRules = {
-  rulesVersion: "sows-ear-0.3";
-  farmersAtThreeOrFour: 2;
-  farmersAtFiveToEight: 1;
+export type GameRules = {
+  rulesVersion: "word-game-0.4";
+  guessersAtThreeOrFour: 2;
+  guessersAtFiveToEight: 1;
   maxLetters: 5;
-  ribbonByDepth: [20, 10, 7, 5, 3];
-  countyFairMode: "best-five";
+  pointsByDepth: [20, 10, 7, 5, 3];
+  finalScoreMode: "best-five";
   fifthLetterBehavior: "guess-or-spoil";
 };
 
-export const SOWS_EAR_RULES: SowsEarRules = {
-  rulesVersion: "sows-ear-0.3",
-  farmersAtThreeOrFour: 2,
-  farmersAtFiveToEight: 1,
+export const GAME_RULES: GameRules = {
+  rulesVersion: "word-game-0.4",
+  guessersAtThreeOrFour: 2,
+  guessersAtFiveToEight: 1,
   maxLetters: 5,
-  ribbonByDepth: [20, 10, 7, 5, 3],
-  countyFairMode: "best-five",
+  pointsByDepth: [20, 10, 7, 5, 3],
+  finalScoreMode: "best-five",
   fifthLetterBehavior: "guess-or-spoil",
 };
 
 export function pointsForDepth(correct: boolean, depth: number): number {
   if (!correct || depth < 1 || depth > 5) return 0;
-  return RIBBON_BY_DEPTH[depth as Depth];
+  return POINTS_BY_DEPTH[depth as Depth];
 }
 
 export function finalScoreFromPoints(points: number[]): number {
@@ -41,9 +41,8 @@ export function roundsForPlayerCount(playerCount: number): number {
   return playerCount * (playerCount <= 4 ? 2 : 1);
 }
 
-export const ribbon = pointsForDepth;
-export const countyFair = finalScoreFromPoints;
-export const harvestsForPlayerCount = roundsForPlayerCount;
+export const points = pointsForDepth;
+export const finalScore = finalScoreFromPoints;
 
 export function normalizeGuess(value: string, locale = "en-US"): string {
   return value

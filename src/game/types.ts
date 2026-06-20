@@ -1,6 +1,6 @@
 export type DifficultyHint = "easy" | "medium" | "spicy";
 
-export type Field = {
+export type Category = {
   id: string;
   label: string;
   locale: "en-US";
@@ -12,12 +12,12 @@ export type Field = {
 
 export type GamePhase =
   | "lobby"
-  | "field-choice"
-  | "seed"
-  | "planting"
-  | "farmer-call"
-  | "adjudication"
-  | "harvest-recap"
+  | "category-choice"
+  | "answer-entry"
+  | "letter-entry"
+  | "guesser-call"
+  | "guess-judging"
+  | "round-recap"
   | "final";
 
 export type GameStatus = "lobby" | "active" | "complete" | "void";
@@ -29,6 +29,17 @@ export type RoomHandle = {
   displayName: string;
   lastSeenAt: number;
   createdAt: number;
+};
+
+export type RoomPresence = {
+  presenceKey: string;
+  roomSlug: string;
+  handle: string;
+  normalizedHandle: string;
+  displayName: string;
+  lastSeenAt: number;
+  createdAt: number;
+  updatedAt: number;
 };
 
 export type GamePlayer = {
@@ -56,7 +67,7 @@ export type ClueEntry = {
   letter: string;
   skipped: boolean;
   endsWord: boolean;
-  sprouted: boolean;
+  revealed: boolean;
   filledAtDepth?: number;
   createdAt: number;
 };
@@ -76,19 +87,19 @@ export type Round = {
   roundNumber: number;
   phase: GamePhase;
   status: RoundStatus;
-  farmerHandle: string;
-  sowerHandle: string;
-  fieldOptions: string[];
-  fieldId?: string;
-  fieldLabel?: string;
+  guesserHandle: string;
+  answerWriterHandle: string;
+  categoryOptions: string[];
+  categoryId?: string;
+  categoryLabel?: string;
   depth: number;
   phaseVersion: number;
-  seedRaw?: string;
-  seedNorm?: string;
+  answerRaw?: string;
+  answerNorm?: string;
   guessRaw?: string;
   guessNorm?: string;
   accepted?: boolean;
-  ribbon?: number;
+  points?: number;
   rows: Row[];
   entries: ClueEntry[];
   createdAt: number;
@@ -106,12 +117,12 @@ export type Game = {
   rounds: Round[];
   currentRoundId?: string;
   currentRoundNumber: number;
-  totalHarvests: number;
+  totalRounds: number;
   phaseVersion: number;
   playerCount: number;
-  fieldPackId: string;
+  categoryPackId: string;
   rulesVersion: string;
-  ribbons: number[];
+  roundPoints: number[];
   pausedAt?: number;
   createdAt: number;
   updatedAt: number;
@@ -126,32 +137,31 @@ export type RoomState = {
   appliedActionIds: Set<string>;
 };
 
-export type SowsEarEventType =
+export type GameEventType =
   | "handle.claimed"
-  | "handle.seen"
-  | "season.created"
+  | "game.created"
   | "player.joined"
   | "player.ready-set"
   | "seats.reordered"
-  | "season.started"
-  | "field.chosen"
-  | "seed.planted"
-  | "letters.planted"
-  | "rows.sprouted"
-  | "farmer.waited"
+  | "game.started"
+  | "category.chosen"
+  | "answer.submitted"
+  | "letters.submitted"
+  | "letters.revealed"
+  | "more-letters.requested"
   | "guess.submitted"
-  | "guess.adjudicated"
-  | "harvest.spoiled"
-  | "next-harvest.started"
-  | "season.completed"
-  | "harvest.voided"
-  | "season.paused"
-  | "season.resumed"
+  | "guess.judged"
+  | "round.passed"
+  | "next-round.started"
+  | "game.completed"
+  | "round.voided"
+  | "game.paused"
+  | "game.resumed"
   | "host.transferred";
 
-export type SowsEarEvent = {
+export type GameEvent = {
   actionId: string;
-  type: SowsEarEventType;
+  type: GameEventType;
   roomSlug: string;
   actorHandle: string;
   gameId?: string;
@@ -162,5 +172,5 @@ export type SowsEarEvent = {
 };
 
 export type CommandResult =
-  | { ok: true; events: SowsEarEvent[] }
+  | { ok: true; events: GameEvent[] }
   | { ok: false; error: string };

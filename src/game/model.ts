@@ -1,8 +1,20 @@
 import { DEFAULT_PACK_ID, RULES_VERSION } from "../config";
 import { fieldLabel, pickFieldOptions } from "../content/fields";
-import { assignmentsForDepth, rolesForRound, rowCountForPlayers, type PlayerSeat } from "./rotation";
-import { countyFair, harvestsForPlayerCount, isValidLetter, normalizeGuess, ribbon } from "./rules";
-import type { ClueEntry, CommandResult, Game, GamePhase, GamePlayer, RoomHandle, RoomState, Round, Row, SowsEarEvent } from "./types";
+import { assignmentsForDepth, rolesForRound, type PlayerSeat } from "./rotation";
+import { finalScoreFromPoints, isValidLetter, normalizeGuess, pointsForDepth, roundsForPlayerCount } from "./rules";
+import type {
+  ClueCellInput,
+  ClueEntry,
+  CommandResult,
+  Game,
+  GamePhase,
+  GamePlayer,
+  RoomHandle,
+  RoomState,
+  Round,
+  Row,
+  SowsEarEvent,
+} from "./types";
 
 export const HOST_RECOVERY_OFFLINE_MS = 45000;
 
@@ -46,14 +58,39 @@ export function playerForHandle(game: Game, handle: string): GamePlayer | undefi
   return game.players.find((player) => player.normalizedHandle === normalizedHandle);
 }
 
-export function roleForHandle(game: Game, handle: string): "farmer" | "sower" | "hand" | "none" {
+export function roleForHandle(game: Game, handle: string): "guesser" | "picker" | "cluer" | "none" {
   const round = currentRound(game);
   const normalizedHandle = normalizeHandle(handle);
   if (!round) return "none";
-  if (normalizeHandle(round.farmerHandle) === normalizedHandle) return "farmer";
-  if (normalizeHandle(round.sowerHandle) === normalizedHandle) return "sower";
-  if (playerForHandle(game, handle)) return "hand";
+  if (normalizeHandle(round.farmerHandle) === normalizedHandle) return "guesser";
+  if (normalizeHandle(round.sowerHandle) === normalizedHandle) return "picker";
+  if (playerForHandle(game, handle)) return "cluer";
   return "none";
+}
+
+export function displayHandleForGame(game: Game, handle: string): string {
+  return playerForHandle(game, handle)?.handle ?? cleanHandle(handle);
+}
+
+export function rowEndedBeforeDepth(round: Round, rowIndex: number, depth: number): boolean {
+  return round.entries.some((entry) => entry.rowIndex === rowIndex && entry.depth < depth && entry.endsWord);
+}
+
+export function rowIsComplete(round: Round, rowIndex: number): boolean {
+  return round.entries.some((entry) => entry.rowIndex === rowIndex && entry.endsWord);
+}
+
+export function activeRowsForDepth(round: Round): Row[] {
+  return round.rows.filter((row) => !rowEndedBeforeDepth(round, row.rowIndex, round.depth));
+}
+
+export function rowsHeldForClue(round: Round, handle: string): Row[] {
+  const normalizedHandle = normalizeHandle(handle);
+  return activeRowsForDepth(round).filter(
+    (row) =>
+      normalizeHandle(row.currentHolderHandle) === normalizedHandle &&
+      !round.entries.some((entry) => entry.rowIndex === row.rowIndex && entry.depth === round.depth),
+  );
 }
 
 export function reduceEvents(roomSlug: string, events: SowsEarEvent[]): RoomState {
@@ -193,7 +230,7 @@ function applyEvent(state: RoomState, event: SowsEarEvent): void {
       game.status = "active";
       game.phase = "field-choice";
       game.currentRoundNumber = 1;
-      game.totalHarvests = harvestsForPlayerCount(players.length);
+      game.totalHarvests = roundsForPlayerCount(players.length);
       game.phaseVersion += 1;
       const round = makeRound(game, 1, event.createdAt);
       game.rounds.push(round);
@@ -234,7 +271,7 @@ function applyEvent(state: RoomState, event: SowsEarEvent): void {
       const entries = arrayPayload<ClueEntry>(event, "entries");
       for (const entry of entries) {
         if (round.entries.some((item) => entryKey(item) === entryKey(entry))) continue;
-        round.entries.push({ ...entry, sprouted: false, createdAt: event.createdAt });
+        round.entries.push({ ...entry, endsWord: Boolean(entry.endsWord), sprouted: false, createdAt: event.createdAt });
       }
       round.updatedAt = event.createdAt;
       return;
@@ -254,6 +291,7 @@ function applyEvent(state: RoomState, event: SowsEarEvent): void {
     case "farmer.waited": {
       const round = roundForEvent(game, event);
       if (!round || round.phase !== "farmer-call" || round.depth >= 5) return;
+      if (round.rows.every((row) => rowIsComplete(round, row.rowIndex))) return;
       round.depth += 1;
       round.rows = rowsFor(game, round.roundNumber, round.depth);
       round.phase = "planting";
@@ -436,7 +474,7 @@ function bumpGame(game: Game, phase: GamePhase, now: number): void {
 
 function resolveRound(game: Game, round: Round, accepted: boolean, now: number): void {
   round.accepted = accepted;
-  round.ribbon = ribbon(accepted, round.depth);
+  round.ribbon = pointsForDepth(accepted, round.depth);
   round.status = "resolved";
   round.phase = "harvest-recap";
   round.phaseVersion += 1;
@@ -527,11 +565,11 @@ export function commandMarkHandleSeen(state: RoomState, handleInput: string): Co
 
 export function commandCreateSeason(state: RoomState, handle: string): CommandResult {
   if (!state.handles.some((item) => item.normalizedHandle === normalizeHandle(handle))) {
-    return { ok: false, error: "Enter a handle before creating a Season." };
+    return { ok: false, error: "Enter a handle before starting a game." };
   }
   const active = activeGame(state);
   if (active && active.status !== "complete" && active.status !== "void") {
-    return { ok: false, error: "This Room already has an active Season." };
+    return { ok: false, error: "This room already has an active game." };
   }
   const gameId = `${state.roomSlug}:game:${Date.now().toString(36)}`;
   const base = eventOf(
@@ -555,7 +593,7 @@ export function commandJoinSeason(state: RoomState, handle: string): CommandResu
   const game = activeGame(state);
   if (!game || game.status !== "lobby") return { ok: false, error: "There is no lobby to join." };
   if (playerForHandle(game, handle)) return { ok: true, events: [] };
-  if (game.players.length >= 8) return { ok: false, error: "This Season already has eight players." };
+  if (game.players.length >= 8) return { ok: false, error: "This game already has eight players." };
   return {
     ok: true,
 	    events: [
@@ -573,7 +611,7 @@ export function commandJoinSeason(state: RoomState, handle: string): CommandResu
 export function commandSetReady(state: RoomState, handle: string, ready: boolean): CommandResult {
   const game = activeGame(state);
   if (!game || game.status !== "lobby") return { ok: false, error: "There is no lobby." };
-  if (!playerForHandle(game, handle)) return { ok: false, error: "Join the Season first." };
+  if (!playerForHandle(game, handle)) return { ok: false, error: "Join the game first." };
   return {
     ok: true,
     events: [eventOf(state, "player.ready-set", handle, { handle, ready }, { gameId: game.id })],
@@ -589,7 +627,7 @@ export function commandReorderSeats(state: RoomState, handle: string, orderedHan
   if (normalizedOrder.length !== game.players.length) return { ok: false, error: "Seat order must include every player." };
   if (new Set(normalizedOrder).size !== game.players.length) return { ok: false, error: "Seat order cannot include duplicates." };
   const orderedSeatPlayers = normalizedOrder.map((normalizedHandle) => playersByHandle.get(normalizedHandle));
-  if (orderedSeatPlayers.some((player) => !player)) return { ok: false, error: "Seat order includes a player outside this Season." };
+  if (orderedSeatPlayers.some((player) => !player)) return { ok: false, error: "Seat order includes a player outside this game." };
   const handles = orderedSeatPlayers.map((player) => player!.handle);
   const current = orderedPlayers(game).map((player) => player.handle);
   if (handles.every((playerHandle, index) => normalizeHandle(playerHandle) === normalizeHandle(current[index] ?? ""))) {
@@ -614,7 +652,7 @@ export function commandMoveSeat(state: RoomState, handle: string, playerHandle: 
   if (!game || game.status !== "lobby") return { ok: false, error: "Seats can only be changed in the lobby." };
   const handles = orderedPlayers(game).map((player) => player.handle);
   const from = handles.findIndex((item) => normalizeHandle(item) === normalizeHandle(playerHandle));
-  if (from < 0) return { ok: false, error: "Choose a player in this Season." };
+  if (from < 0) return { ok: false, error: "Choose a player in this game." };
   const to = direction === "up" ? Math.max(0, from - 1) : Math.min(handles.length - 1, from + 1);
   if (to === from) return { ok: true, events: [] };
   const next = [...handles];
@@ -640,7 +678,7 @@ export function commandRandomizeSeats(state: RoomState, handle: string): Command
 export function commandStartSeason(state: RoomState, handle: string): CommandResult {
   const game = activeGame(state);
   if (!game || game.status !== "lobby") return { ok: false, error: "There is no lobby to start." };
-  if (game.pausedAt) return { ok: false, error: "The Season is paused." };
+  if (game.pausedAt) return { ok: false, error: "The game is paused." };
   if (normalizeHandle(game.hostHandle) !== normalizeHandle(handle)) return { ok: false, error: "Only the host can start." };
   const readyPlayers = game.players.filter((player) => player.ready);
   if (readyPlayers.length < 3 || readyPlayers.length > 8) {
@@ -657,10 +695,10 @@ export function commandStartSeason(state: RoomState, handle: string): CommandRes
 export function commandChooseField(state: RoomState, handle: string, fieldId: string): CommandResult {
   const game = activeGame(state);
   const round = game ? currentRound(game) : undefined;
-  if (!game || !round || round.phase !== "field-choice") return { ok: false, error: "No Field is being chosen." };
-  if (game.pausedAt) return { ok: false, error: "The Season is paused." };
-  if (normalizeHandle(round.farmerHandle) !== normalizeHandle(handle)) return { ok: false, error: "Only the Farmer chooses." };
-  if (!round.fieldOptions.includes(fieldId)) return { ok: false, error: "Choose one of the offered Fields." };
+  if (!game || !round || round.phase !== "field-choice") return { ok: false, error: "No category is being chosen." };
+  if (game.pausedAt) return { ok: false, error: "The game is paused." };
+  if (normalizeHandle(round.farmerHandle) !== normalizeHandle(handle)) return { ok: false, error: "Only the guesser chooses." };
+  if (!round.fieldOptions.includes(fieldId)) return { ok: false, error: "Choose one of the offered categories." };
   return {
     ok: true,
     events: [
@@ -678,11 +716,11 @@ export function commandChooseField(state: RoomState, handle: string, fieldId: st
 export function commandPlantSeed(state: RoomState, handle: string, seedRaw: string): CommandResult {
   const game = activeGame(state);
   const round = game ? currentRound(game) : undefined;
-  if (!game || !round || round.phase !== "seed") return { ok: false, error: "No Seed is being planted." };
-  if (game.pausedAt) return { ok: false, error: "The Season is paused." };
-  if (normalizeHandle(round.sowerHandle) !== normalizeHandle(handle)) return { ok: false, error: "Only the Sower plants the Seed." };
+  if (!game || !round || round.phase !== "seed") return { ok: false, error: "No answer is being chosen." };
+  if (game.pausedAt) return { ok: false, error: "The game is paused." };
+  if (normalizeHandle(round.sowerHandle) !== normalizeHandle(handle)) return { ok: false, error: "Only the picker chooses the answer." };
   const seed = seedRaw.trim();
-  if (!seed) return { ok: false, error: "Enter a Seed." };
+  if (!seed) return { ok: false, error: "Enter an answer." };
   return {
     ok: true,
     events: [
@@ -697,23 +735,28 @@ export function commandPlantSeed(state: RoomState, handle: string, seedRaw: stri
   };
 }
 
-export function commandPlantLetters(state: RoomState, handle: string, lettersByRow: Map<number, string>): CommandResult {
+export function commandPlantLetters(state: RoomState, handle: string, lettersByRow: Map<number, string | ClueCellInput>): CommandResult {
   const game = activeGame(state);
   const round = game ? currentRound(game) : undefined;
   if (!game || !round || round.phase !== "planting") return { ok: false, error: "Rows are not being tended." };
-  if (game.pausedAt) return { ok: false, error: "The Season is paused." };
-  const heldRows = round.rows.filter((row) => normalizeHandle(row.currentHolderHandle) === normalizeHandle(handle));
+  if (game.pausedAt) return { ok: false, error: "The game is paused." };
+  const heldRows = rowsHeldForClue(round, handle);
   if (!heldRows.length) return { ok: false, error: "You do not hold a Row right now." };
   const entries: ClueEntry[] = [];
+  const canonicalHandle = displayHandleForGame(game, handle);
   for (const row of heldRows) {
-    const letter = lettersByRow.get(row.rowIndex);
-    if (!letter) return { ok: false, error: "Plant one letter for each Row you hold." };
-    if (!isValidLetter(letter)) return { ok: false, error: "Plant a single letter or blank underscore." };
+    const input = lettersByRow.get(row.rowIndex);
+    const letter = typeof input === "string" ? input : input?.letter;
+    const endsWord = typeof input === "string" ? false : Boolean(input?.endsWord);
+    if (!letter) return { ok: false, error: "Add one letter for each Row you hold." };
+    const normalizedLetter = letter.toLocaleUpperCase("en-US");
+    if (!isValidLetter(normalizedLetter)) return { ok: false, error: "Add a single letter." };
     entries.push({
       rowIndex: row.rowIndex,
       depth: round.depth,
-      handle,
-      letter,
+      handle: canonicalHandle,
+      letter: normalizedLetter,
+      endsWord,
       sprouted: false,
       createdAt: Date.now(),
     });
@@ -727,7 +770,8 @@ export function commandPlantLetters(state: RoomState, handle: string, lettersByR
   );
   const existingKeys = new Set(round.entries.map(entryKey));
   const combinedKeys = new Set([...existingKeys, ...entries.map(entryKey)]);
-  const shouldSprout = combinedKeys.size >= rowCountForPlayers(game.players.length) * round.depth;
+  const expectedRows = activeRowsForDepth(round);
+  const shouldSprout = expectedRows.every((row) => combinedKeys.has(`${row.rowIndex}:${round.depth}`));
   const events = [baseEvent];
   if (shouldSprout) {
     events.push(
@@ -751,7 +795,7 @@ export function commandTrySprout(state: RoomState, handle: string): CommandResul
   const entriesAtDepth = round.entries.filter((entry) => entry.depth === round.depth);
   if (entriesAtDepth.every((entry) => entry.sprouted)) return { ok: true, events: [] };
   const plantedRows = new Set(entriesAtDepth.map((entry) => entry.rowIndex));
-  if (plantedRows.size < rowCountForPlayers(game.players.length)) return { ok: true, events: [] };
+  if (!activeRowsForDepth(round).every((row) => plantedRows.has(row.rowIndex))) return { ok: true, events: [] };
   return {
     ok: true,
     events: [
@@ -769,10 +813,13 @@ export function commandTrySprout(state: RoomState, handle: string): CommandResul
 export function commandWait(state: RoomState, handle: string): CommandResult {
   const game = activeGame(state);
   const round = game ? currentRound(game) : undefined;
-  if (!game || !round || round.phase !== "farmer-call") return { ok: false, error: "The Farmer is not choosing now." };
-  if (game.pausedAt) return { ok: false, error: "The Season is paused." };
-  if (normalizeHandle(round.farmerHandle) !== normalizeHandle(handle)) return { ok: false, error: "Only the Farmer can wait." };
-  if (round.depth >= 5) return { ok: false, error: "At five letters, the Farmer must Guess or call it Spoiled." };
+  if (!game || !round || round.phase !== "farmer-call") return { ok: false, error: "The guesser is not choosing now." };
+  if (game.pausedAt) return { ok: false, error: "The game is paused." };
+  if (normalizeHandle(round.farmerHandle) !== normalizeHandle(handle)) return { ok: false, error: "Only the guesser can wait." };
+  if (round.depth >= 5) return { ok: false, error: "At five cells, the guesser must guess or pass." };
+  if (round.rows.every((row) => rowIsComplete(round, row.rowIndex))) {
+    return { ok: false, error: "All rows are complete. Guess or pass." };
+  }
   return {
     ok: true,
     events: [
@@ -784,9 +831,9 @@ export function commandWait(state: RoomState, handle: string): CommandResult {
 export function commandGuess(state: RoomState, handle: string, guessRaw: string): CommandResult {
   const game = activeGame(state);
   const round = game ? currentRound(game) : undefined;
-  if (!game || !round || round.phase !== "farmer-call") return { ok: false, error: "The Farmer is not guessing now." };
-  if (game.pausedAt) return { ok: false, error: "The Season is paused." };
-  if (normalizeHandle(round.farmerHandle) !== normalizeHandle(handle)) return { ok: false, error: "Only the Farmer can Guess." };
+  if (!game || !round || round.phase !== "farmer-call") return { ok: false, error: "The guesser is not guessing now." };
+  if (game.pausedAt) return { ok: false, error: "The game is paused." };
+  if (normalizeHandle(round.farmerHandle) !== normalizeHandle(handle)) return { ok: false, error: "Only the guesser can guess." };
   const guess = guessRaw.trim();
   if (!guess) return { ok: false, error: "Enter a Guess." };
   return {
@@ -807,8 +854,8 @@ export function commandAdjudicate(state: RoomState, handle: string, accepted: bo
   const game = activeGame(state);
   const round = game ? currentRound(game) : undefined;
   if (!game || !round || round.phase !== "adjudication") return { ok: false, error: "No Guess is awaiting judgment." };
-  if (game.pausedAt) return { ok: false, error: "The Season is paused." };
-  if (normalizeHandle(round.sowerHandle) !== normalizeHandle(handle)) return { ok: false, error: "Only the Sower adjudicates." };
+  if (game.pausedAt) return { ok: false, error: "The game is paused." };
+  if (normalizeHandle(round.sowerHandle) !== normalizeHandle(handle)) return { ok: false, error: "Only the picker adjudicates." };
   return {
     ok: true,
     events: [
@@ -826,9 +873,9 @@ export function commandAdjudicate(state: RoomState, handle: string, accepted: bo
 export function commandSpoil(state: RoomState, handle: string): CommandResult {
   const game = activeGame(state);
   const round = game ? currentRound(game) : undefined;
-  if (!game || !round || round.phase !== "farmer-call") return { ok: false, error: "Nothing can be spoiled now." };
-  if (game.pausedAt) return { ok: false, error: "The Season is paused." };
-  if (normalizeHandle(round.farmerHandle) !== normalizeHandle(handle)) return { ok: false, error: "Only the Farmer can call Spoiled." };
+  if (!game || !round || round.phase !== "farmer-call") return { ok: false, error: "Nothing can be passed now." };
+  if (game.pausedAt) return { ok: false, error: "The game is paused." };
+  if (normalizeHandle(round.farmerHandle) !== normalizeHandle(handle)) return { ok: false, error: "Only the guesser can pass." };
   return {
     ok: true,
     events: [
@@ -846,9 +893,9 @@ export function commandSpoil(state: RoomState, handle: string): CommandResult {
 export function commandAdvanceAfterRecap(state: RoomState, handle: string): CommandResult {
   const game = activeGame(state);
   const round = game ? currentRound(game) : undefined;
-  if (!game || !round || round.phase !== "harvest-recap") return { ok: false, error: "No Harvest recap is ready." };
-  if (game.pausedAt) return { ok: false, error: "The Season is paused." };
-  if (normalizeHandle(game.hostHandle) !== normalizeHandle(handle)) return { ok: false, error: "Only the host advances the Season." };
+  if (!game || !round || round.phase !== "harvest-recap") return { ok: false, error: "No round recap is ready." };
+  if (game.pausedAt) return { ok: false, error: "The game is paused." };
+  if (normalizeHandle(game.hostHandle) !== normalizeHandle(handle)) return { ok: false, error: "Only the host advances the game." };
   if (round.roundNumber >= game.totalHarvests) {
     return {
       ok: true,
@@ -872,12 +919,12 @@ export function commandAdvanceAfterRecap(state: RoomState, handle: string): Comm
 }
 
 export function finalScore(game: Game): number {
-  return countyFair(game.ribbons);
+  return finalScoreFromPoints(game.ribbons);
 }
 
 export function commandPauseSeason(state: RoomState, handle: string): CommandResult {
   const game = activeGame(state);
-  if (!game || game.status !== "active") return { ok: false, error: "There is no active Season to pause." };
+  if (!game || game.status !== "active") return { ok: false, error: "There is no active game to pause." };
   if (normalizeHandle(game.hostHandle) !== normalizeHandle(handle)) return { ok: false, error: "Only the host can pause." };
   if (game.pausedAt) return { ok: true, events: [] };
   return {
@@ -888,7 +935,7 @@ export function commandPauseSeason(state: RoomState, handle: string): CommandRes
 
 export function commandResumeSeason(state: RoomState, handle: string): CommandResult {
   const game = activeGame(state);
-  if (!game || game.status !== "active") return { ok: false, error: "There is no active Season to resume." };
+  if (!game || game.status !== "active") return { ok: false, error: "There is no active game to resume." };
   if (normalizeHandle(game.hostHandle) !== normalizeHandle(handle)) return { ok: false, error: "Only the host can resume." };
   if (!game.pausedAt) return { ok: true, events: [] };
   return {
@@ -899,10 +946,10 @@ export function commandResumeSeason(state: RoomState, handle: string): CommandRe
 
 export function commandTransferHost(state: RoomState, handle: string, nextHost: string): CommandResult {
   const game = activeGame(state);
-  if (!game) return { ok: false, error: "There is no Season." };
+  if (!game) return { ok: false, error: "There is no game." };
   if (normalizeHandle(game.hostHandle) !== normalizeHandle(handle)) return { ok: false, error: "Only the host can transfer host." };
   const player = playerForHandle(game, nextHost);
-  if (!player) return { ok: false, error: "Choose a player in this Season." };
+  if (!player) return { ok: false, error: "Choose a player in this game." };
   if (normalizeHandle(player.handle) === normalizeHandle(game.hostHandle)) return { ok: true, events: [] };
   return {
     ok: true,
@@ -920,9 +967,9 @@ export function commandTransferHost(state: RoomState, handle: string, nextHost: 
 
 export function commandClaimHost(state: RoomState, handle: string, now = Date.now()): CommandResult {
   const game = activeGame(state);
-  if (!game || (game.status !== "active" && game.status !== "lobby")) return { ok: false, error: "There is no Season." };
+  if (!game || (game.status !== "active" && game.status !== "lobby")) return { ok: false, error: "There is no game." };
   const player = playerForHandle(game, handle);
-  if (!player) return { ok: false, error: "Join the Season first." };
+  if (!player) return { ok: false, error: "Join the game first." };
   if (normalizeHandle(player.handle) === normalizeHandle(game.hostHandle)) return { ok: true, events: [] };
   const hostHandle = state.handles.find((item) => item.normalizedHandle === normalizeHandle(game.hostHandle));
   if (hostHandle && now - hostHandle.lastSeenAt <= HOST_RECOVERY_OFFLINE_MS) {
@@ -945,9 +992,9 @@ export function commandClaimHost(state: RoomState, handle: string, now = Date.no
 export function commandVoidHarvest(state: RoomState, handle: string): CommandResult {
   const game = activeGame(state);
   const round = game ? currentRound(game) : undefined;
-  if (!game || !round || game.status !== "active") return { ok: false, error: "There is no active Harvest to void." };
-  if (normalizeHandle(game.hostHandle) !== normalizeHandle(handle)) return { ok: false, error: "Only the host can void a Harvest." };
-  if (round.status !== "active") return { ok: false, error: "This Harvest is already resolved." };
+  if (!game || !round || game.status !== "active") return { ok: false, error: "There is no active round to void." };
+  if (normalizeHandle(game.hostHandle) !== normalizeHandle(handle)) return { ok: false, error: "Only the host can void a round." };
+  if (round.status !== "active") return { ok: false, error: "This round is already resolved." };
   return {
     ok: true,
     events: [

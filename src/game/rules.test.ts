@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { countyFair, harvestsForPlayerCount, normalizeGuess, ribbon } from "./rules";
+import { finalScoreFromPoints, normalizeGuess, pointsForDepth, roundsForPlayerCount } from "./rules";
 import { assignmentsForDepth, rolesForRound, rowCountForPlayers, type PlayerSeat } from "./rotation";
 
 function players(count: number): PlayerSeat[] {
@@ -11,25 +11,25 @@ function players(count: number): PlayerSeat[] {
 }
 
 describe("scoring", () => {
-  test("awards descending ribbons by depth", () => {
-    expect([1, 2, 3, 4, 5].map((depth) => ribbon(true, depth))).toEqual([20, 10, 7, 5, 3]);
-    expect(ribbon(false, 1)).toBe(0);
-    expect(ribbon(true, 0)).toBe(0);
-    expect(ribbon(true, 6)).toBe(0);
+  test("awards descending points by depth", () => {
+    expect([1, 2, 3, 4, 5].map((depth) => pointsForDepth(true, depth))).toEqual([20, 10, 7, 5, 3]);
+    expect(pointsForDepth(false, 1)).toBe(0);
+    expect(pointsForDepth(true, 0)).toBe(0);
+    expect(pointsForDepth(true, 6)).toBe(0);
   });
 
-  test("county fair sums the five highest ribbons", () => {
-    expect(countyFair([3, 20, 0, 10, 7, 5, 20])).toBe(62);
-    expect(countyFair([20, 10])).toBe(30);
-    expect(countyFair([])).toBe(0);
+  test("final score sums the five highest point values", () => {
+    expect(finalScoreFromPoints([3, 20, 0, 10, 7, 5, 20])).toBe(62);
+    expect(finalScoreFromPoints([20, 10])).toBe(30);
+    expect(finalScoreFromPoints([])).toBe(0);
   });
 
-  test("harvest count follows player-count rules", () => {
-    expect(harvestsForPlayerCount(3)).toBe(6);
-    expect(harvestsForPlayerCount(4)).toBe(8);
-    expect(harvestsForPlayerCount(5)).toBe(5);
-    expect(harvestsForPlayerCount(8)).toBe(8);
-    expect(() => harvestsForPlayerCount(2)).toThrow();
+  test("round count follows player-count rules", () => {
+    expect(roundsForPlayerCount(3)).toBe(6);
+    expect(roundsForPlayerCount(4)).toBe(8);
+    expect(roundsForPlayerCount(5)).toBe(5);
+    expect(roundsForPlayerCount(8)).toBe(8);
+    expect(() => roundsForPlayerCount(2)).toThrow();
   });
 });
 
@@ -66,7 +66,7 @@ describe("rotation", () => {
     }
   });
 
-  test("three-player variant gives both Hands two rows at every depth", () => {
+  test("three-player variant gives both cluers two rows at every depth", () => {
     const seats = players(3);
     for (let roundNumber = 1; roundNumber <= 6; roundNumber += 1) {
       const farmer = rolesForRound(seats, roundNumber).farmer;
@@ -84,11 +84,19 @@ describe("rotation", () => {
     }
   });
 
-  test("property: every supported count, Harvest, and depth preserves Row handoff invariants", () => {
+  test("three-player variant keeps handing rows onward after the second letter", () => {
+    const seats = players(3);
+    const signatures = Array.from({ length: 5 }, (_, index) => assignmentSignature(assignmentsForDepth(seats, 1, index + 1)));
+    expect(new Set(signatures.slice(0, 4)).size).toBe(4);
+    expect(signatures[1]).not.toBe(signatures[2]);
+    expect(signatures[2]).not.toBe(signatures[3]);
+  });
+
+  test("property: every supported count, round, and depth preserves Row handoff invariants", () => {
     for (let count = 3; count <= 8; count += 1) {
       const seats = players(count);
       const rowCount = rowCountForPlayers(count);
-      for (let roundNumber = 1; roundNumber <= harvestsForPlayerCount(count); roundNumber += 1) {
+      for (let roundNumber = 1; roundNumber <= roundsForPlayerCount(count); roundNumber += 1) {
         const roles = rolesForRound(seats, roundNumber);
         const handIds = new Set(roles.hands.map((hand) => hand.userId));
         const rowDepthKeys = new Set<string>();
@@ -113,7 +121,7 @@ describe("rotation", () => {
             rowDepthKeys.add(`${assignment.rowIndex}:${depth}`);
             holderCounts.set(assignment.holderUserId, (holderCounts.get(assignment.holderUserId) ?? 0) + 1);
             if (depth === 1) starterByRow.set(assignment.rowIndex, assignment.holderUserId);
-            else expect(assignment.holderUserId).not.toBe(starterByRow.get(assignment.rowIndex));
+            else if (count > 3) expect(assignment.holderUserId).not.toBe(starterByRow.get(assignment.rowIndex));
           }
 
           if (count === 3) {
@@ -126,7 +134,7 @@ describe("rotation", () => {
         }
 
         expect(rowDepthKeys.size).toBe(rowCount * 5);
-        const repeatPeriod = count === 3 ? 1 : count - 2;
+        const repeatPeriod = count === 3 ? 4 : count - 2;
         for (let depth = 2; depth + repeatPeriod <= 5; depth += 1) {
           expect(signatures.get(depth + repeatPeriod)).toBe(signatures.get(depth));
         }
@@ -134,10 +142,10 @@ describe("rotation", () => {
     }
   });
 
-  test("Hands never receive Rows they started after the first letter", () => {
-    for (let count = 3; count <= 8; count += 1) {
+  test("cluers never receive Rows they started after the first letter in standard rotation", () => {
+    for (let count = 4; count <= 8; count += 1) {
       const seats = players(count);
-      for (let roundNumber = 1; roundNumber <= harvestsForPlayerCount(count); roundNumber += 1) {
+      for (let roundNumber = 1; roundNumber <= roundsForPlayerCount(count); roundNumber += 1) {
         const starters = new Map(
           assignmentsForDepth(seats, roundNumber, 1).map((assignment) => [assignment.rowIndex, assignment.holderUserId]),
         );

@@ -28,6 +28,7 @@ import {
   finalScore,
   HOST_RECOVERY_OFFLINE_MS,
   reduceEvents,
+  rowsHeldForClue,
 } from "./model";
 import { clampLetter } from "./rules";
 import type { CommandResult, RoomState, SowsEarEvent } from "./types";
@@ -123,7 +124,7 @@ function resolveCurrentRoundExactly(state: RoomState): RoomState {
 }
 
 describe("room command model", () => {
-  test("joins a room by handle with no auth and starts a three-player Season", () => {
+  test("joins a room by handle with no auth and starts a three-player game", () => {
     const state = startThreePlayerGame();
     const game = activeGame(state)!;
     const round = currentRound(game)!;
@@ -151,7 +152,7 @@ describe("room command model", () => {
     state = applyRemembered(state, commandClaimHandle(state, "Alice"));
     const created = commandCreateSeason(state, "Alice");
     expect(created.ok).toBe(true);
-    if (!created.ok) throw new Error("expected created Season");
+    if (!created.ok) throw new Error("expected created game");
     const seasonEvent = created.events.find((event) => event.type === "season.created")!;
     expect(seasonEvent.payload.rulesVersion).toBe(RULES_VERSION);
     expect(seasonEvent.payload.fieldPackId).toBe(DEFAULT_PACK_ID);
@@ -183,7 +184,7 @@ describe("room command model", () => {
     expect(game.fieldPackId).toBe("starter-fields-legacy");
   });
 
-  test("starts valid 4, 5, and 8 player Seasons with expected Harvest counts", () => {
+  test("starts valid 4, 5, and 8 player games with expected round counts", () => {
     for (const count of [4, 5, 8]) {
       const handles = Array.from({ length: count }, (_, index) => `P${index + 1}`);
       const state = startGameWithHandles(handles);
@@ -194,7 +195,7 @@ describe("room command model", () => {
     }
   });
 
-  test("only the Farmer can choose one of the offered Fields", () => {
+  test("only the guesser can choose one of the offered categories", () => {
     let state = startThreePlayerGame();
     const round = currentRound(activeGame(state)!)!;
 
@@ -207,7 +208,7 @@ describe("room command model", () => {
     expect(chosen.phase).toBe("seed");
   });
 
-  test("only the Sower can plant a non-empty Seed once", () => {
+  test("only the picker can enter a non-empty answer once", () => {
     let state = startThreePlayerGame();
     const round = currentRound(activeGame(state)!)!;
     state = applyRemembered(state, commandChooseField(state, "Alice", round.fieldOptions[0]!));
@@ -280,12 +281,63 @@ describe("room command model", () => {
     expect(commandPlantLetters(state, "Bob", new Map([[0, "hay"], [1, "S"]])).ok).toBe(false);
     expect(commandPlantLetters(state, "Bob", new Map([[0, "!"], [1, "S"]])).ok).toBe(false);
 
-    state = applyRemembered(state, commandPlantLetters(state, "Bob", new Map([[0, "H"], [1, "_"]])));
+    state = applyRemembered(state, commandPlantLetters(state, "Bob", new Map([[0, "H"], [1, "T"]])));
     expect(currentRound(activeGame(state)!)!.phase).toBe("planting");
     state = applyRemembered(state, commandPlantLetters(state, "Cora", new Map([[2, "C"], [3, "W"]])));
     const sprouted = currentRound(activeGame(state)!)!;
     expect(sprouted.phase).toBe("farmer-call");
     expect(sprouted.entries.every((entry) => entry.sprouted)).toBe(true);
+  });
+
+  test("clue entries preserve display handle casing even when a client submits lower-case handle", () => {
+    let state = startGameWithHandles(["Alice", "V", "Carrie"]);
+    state = chooseCurrentFieldAndSeed(state, "Bale");
+    state = applyRemembered(
+      state,
+      commandPlantLetters(
+        state,
+        "v",
+        new Map([
+          [0, "c"],
+          [1, "b"],
+        ]),
+      ),
+    );
+    const round = currentRound(activeGame(state)!)!;
+    expect(round.entries.map((entry) => entry.handle)).toEqual(["V", "V"]);
+    expect(round.entries.map((entry) => entry.letter)).toEqual(["C", "B"]);
+  });
+
+  test("a period marks the current clue cell as complete and prevents later appends to that row", () => {
+    let state = chooseCurrentFieldAndSeed(startThreePlayerGame(), "Bale");
+    state = applyRemembered(
+      state,
+      commandPlantLetters(
+        state,
+        "Bob",
+        new Map<number, { letter: string; endsWord: boolean }>([
+          [0, { letter: "c", endsWord: true }],
+          [1, { letter: "b", endsWord: false }],
+        ]),
+      ),
+    );
+    state = applyRemembered(state, commandPlantLetters(state, "Cora", new Map([[2, "H"], [3, "W"]])));
+
+    let round = currentRound(activeGame(state)!)!;
+    expect(round.phase).toBe("farmer-call");
+    expect(round.entries.find((entry) => entry.rowIndex === 0)?.endsWord).toBe(true);
+    expect(round.entries.find((entry) => entry.rowIndex === 1)?.endsWord).toBe(false);
+
+    state = applyRemembered(state, commandWait(state, "Alice"));
+    round = currentRound(activeGame(state)!)!;
+    const nextHolderForEndedRow = round.rows.find((row) => row.rowIndex === 0)!.currentHolderHandle;
+    expect(rowsHeldForClue(round, nextHolderForEndedRow).some((row) => row.rowIndex === 0)).toBe(false);
+
+    state = plantCurrentDepth(state, "A");
+    round = currentRound(activeGame(state)!)!;
+    expect(round.phase).toBe("farmer-call");
+    expect(round.entries.filter((entry) => entry.rowIndex === 0)).toHaveLength(1);
+    expect(round.entries.filter((entry) => entry.depth === 2)).toHaveLength(3);
   });
 
   test("trySprout resolves complete planting after stale clients submit without seeing each other", () => {
@@ -382,7 +434,7 @@ describe("room command model", () => {
     expect(currentRound(activeGame(state)!)!.entries).toHaveLength(2);
   });
 
-  test("exact guess resolves, records ribbon, advances history, and computes County Fair", () => {
+  test("exact guess resolves, records points, advances history, and computes final score", () => {
     let state = plantFirstDepth(startThreePlayerGame());
     state = applyRemembered(state, commandGuess(state, "Alice", "bale"));
     let game = activeGame(state)!;
@@ -407,7 +459,7 @@ describe("room command model", () => {
     expect(round.ribbon).toBe(20);
   });
 
-  test("near miss routes to Sower adjudication", () => {
+  test("near miss routes to picker adjudication", () => {
     let state = plantFirstDepth(startThreePlayerGame());
     state = applyRemembered(state, commandGuess(state, "Alice", "hay bale"));
     expect(currentRound(activeGame(state)!)!.phase).toBe("adjudication");
@@ -420,7 +472,7 @@ describe("room command model", () => {
     expect(round.ribbon).toBe(20);
   });
 
-  test("rejected adjudication resolves the Harvest with a zero Ribbon", () => {
+  test("rejected adjudication resolves the round with zero points", () => {
     let state = plantFirstDepth(startThreePlayerGame());
     state = applyRemembered(state, commandGuess(state, "Alice", "hay bale"));
     state = applyRemembered(state, commandAdjudicate(state, "Bob", false));
@@ -431,7 +483,7 @@ describe("room command model", () => {
     expect(commandGuess(state, "Alice", "Bale").ok).toBe(false);
   });
 
-  test("only the Farmer can wait, guess, or call Spoiled from Farmer-call", () => {
+  test("only the guesser can wait, guess, or pass from the guesser decision phase", () => {
     const state = plantFirstDepth(startThreePlayerGame());
 
     for (const hand of ["Bob", "Cora"]) {
@@ -446,7 +498,7 @@ describe("room command model", () => {
     expect(commandSpoil(state, "Alice").ok).toBe(true);
   });
 
-  test("correct command-flow guesses award the configured Ribbon at depths one through five", () => {
+  test("correct command-flow guesses award configured points at depths one through five", () => {
     const expectedByDepth = [20, 10, 7, 5, 3];
     for (let targetDepth = 1; targetDepth <= 5; targetDepth += 1) {
       let state = chooseCurrentFieldAndSeed(startThreePlayerGame(), "Bale");
@@ -496,7 +548,7 @@ describe("room command model", () => {
     expect(round.phase === "harvest-recap" ? round.ribbon : round.depth).toBe(round.phase === "harvest-recap" ? 20 : 2);
   });
 
-  test("host can pause, resume, transfer host, and void an active Harvest", () => {
+  test("host can pause, resume, transfer host, and void an active round", () => {
     let state = startThreePlayerGame();
     state = applyRemembered(state, commandPauseSeason(state, "Alice"));
     expect(activeGame(state)!.pausedAt).toBeNumber();
@@ -538,7 +590,7 @@ describe("room command model", () => {
     expect(game.players.find((player) => player.handle === "Alice")?.isHost).toBe(false);
   });
 
-  test("completes all Harvests and preserves finished Season in Room history", () => {
+  test("completes all rounds and preserves finished game in Room history", () => {
     let state = startThreePlayerGame();
     for (let i = 0; i < 6; i += 1) {
       state = resolveCurrentRoundExactly(state);

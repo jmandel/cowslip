@@ -54,8 +54,14 @@ export type ClueEntry = {
   depth: number;
   handle: string;
   letter: string;
+  endsWord: boolean;
   sprouted: boolean;
   createdAt: number;
+};
+
+export type ClueCellInput = {
+  letter: string;
+  endsWord?: boolean;
 };
 
 export type Round = {

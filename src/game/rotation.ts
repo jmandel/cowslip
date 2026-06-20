@@ -27,9 +27,9 @@ export function rolesForRound(players: PlayerSeat[], roundNumber: number): RoleP
     throw new RangeError("Sow's Ear supports 3-8 players.");
   }
   const farmer = seats[(roundNumber - 1) % seats.length];
-  if (!farmer) throw new Error("Could not assign Farmer.");
+  if (!farmer) throw new Error("Could not assign guesser.");
   const sower = seats[(farmer.seatNumber + 1) % seats.length];
-  if (!sower) throw new Error("Could not assign Sower.");
+  if (!sower) throw new Error("Could not assign picker.");
   const hands = seats
     .slice(farmer.seatNumber + 1)
     .concat(seats.slice(0, farmer.seatNumber))
@@ -66,16 +66,7 @@ function standardAssignments(players: PlayerSeat[], roundNumber: number, depth: 
 
 function threePlayerAssignments(players: PlayerSeat[], roundNumber: number, depth: number): RowAssignment[] {
   const { hands } = rolesForRound(players, roundNumber);
-  if (hands.length !== 2) throw new Error("Three-player variant needs exactly two Hands.");
-
-  if (depth > 1) {
-    return [
-      { rowIndex: 0, holderUserId: hands[1]!.userId, holderSeatNumber: hands[1]!.seatNumber, slot: "left" },
-      { rowIndex: 1, holderUserId: hands[1]!.userId, holderSeatNumber: hands[1]!.seatNumber, slot: "right" },
-      { rowIndex: 2, holderUserId: hands[0]!.userId, holderSeatNumber: hands[0]!.seatNumber, slot: "left" },
-      { rowIndex: 3, holderUserId: hands[0]!.userId, holderSeatNumber: hands[0]!.seatNumber, slot: "right" },
-    ];
-  }
+  if (hands.length !== 2) throw new Error("Three-player variant needs exactly two cluers.");
 
   let slots: RowAssignment[] = [
     { rowIndex: 0, holderUserId: hands[0]!.userId, holderSeatNumber: hands[0]!.seatNumber, slot: "left" },

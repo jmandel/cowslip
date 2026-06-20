@@ -587,6 +587,57 @@ textarea {
   align-items: start;
 }
 
+.game-layout .paper-panel,
+.final-panel,
+.review-panel {
+  background: #fff;
+  border-color: #d5d5d5;
+  box-shadow: 0 10px 22px rgba(0, 0, 0, 0.06);
+}
+
+.game-layout h1,
+.final-panel h1,
+.review-panel h1 {
+  color: #111;
+}
+
+.game-layout h2,
+.final-panel h2,
+.review-panel h2 {
+  color: #111;
+}
+
+.game-layout .eyebrow,
+.final-panel .eyebrow,
+.review-panel .eyebrow {
+  background: #f3f3f3;
+  border-color: #d5d5d5;
+  color: #111;
+}
+
+.game-layout .button.primary,
+.final-panel .button.primary,
+.review-panel .button.primary {
+  background: #111;
+  color: #fff;
+}
+
+.game-layout .button.secondary,
+.final-panel .button.secondary,
+.review-panel .button.secondary {
+  background: #fff;
+  color: #111;
+  border-color: #111;
+}
+
+.game-layout .button.danger,
+.final-panel .button.danger,
+.review-panel .button.danger {
+  background: #fff;
+  color: #111;
+  border-color: #111;
+}
+
 @media (min-width: 860px) {
   .room-grid {
     grid-template-columns: minmax(0, 1.15fr) minmax(280px, 0.85fr);
@@ -914,6 +965,10 @@ textarea {
   gap: 8px;
 }
 
+.hint-row.reveal {
+  grid-template-columns: 42px minmax(0, 1fr);
+}
+
 .row-main {
   display: grid;
   gap: 4px;
@@ -930,36 +985,162 @@ textarea {
 }
 
 .slots {
-  min-height: 42px;
+  min-height: 54px;
   display: grid;
-  grid-template-columns: repeat(5, minmax(28px, 1fr));
-  gap: 8px;
-  align-items: center;
-  border: 2px solid #dfcda6;
-  border-radius: 7px;
-  background: #fffdf7;
+  grid-template-columns: repeat(5, minmax(42px, 1fr));
+  gap: 6px;
+  align-items: stretch;
+  border: 1px solid #d8d8d8;
+  border-radius: 6px;
+  background: #fff;
   padding: 6px;
 }
 
 .slot {
-  min-height: 28px;
-  border-bottom: 3px solid #49522f;
+  position: relative;
+  min-width: 0;
+  min-height: 40px;
+  border: 1px solid #d6d6d6;
+  border-bottom: 3px solid #111;
+  border-radius: 4px;
   display: grid;
   place-items: center;
-  color: var(--green);
-  font-size: 1.35rem;
-  font-weight: 900;
+  color: #111;
+  background: #fff;
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  font-size: 1.2rem;
+  font-weight: 800;
 }
 
 .slot.filled {
-  animation: sprout 180ms ease-out;
+  color: var(--pen-color);
+  border-color: color-mix(in srgb, var(--pen-color) 46%, #d6d6d6);
+  border-bottom-color: var(--pen-color);
 }
 
-.row-contributors {
-  margin: 0;
-  color: #5f513d;
-  font-size: 0.86rem;
-  font-weight: 800;
+.slot.editing {
+  border-color: #111;
+  box-shadow: inset 0 0 0 1px #111;
+}
+
+.clue-placeholder {
+  display: inline-block;
+  width: 2ch;
+  text-align: center;
+  color: #a0a0a0;
+}
+
+.clue-letter {
+  display: inline-block;
+  width: 2ch;
+  text-align: center;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.cell-editor {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 18px;
+  align-items: stretch;
+  gap: 2px;
+}
+
+.clue-letter-input {
+  width: 100%;
+  min-width: 0;
+  min-height: 34px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: #111;
+  padding: 0;
+  text-align: center;
+  text-transform: uppercase;
+  font: inherit;
+  box-shadow: none;
+}
+
+.clue-letter-input:focus-visible {
+  outline: 2px solid #111;
+  outline-offset: -2px;
+}
+
+.word-end-toggle {
+  position: relative;
+  display: grid;
+  place-items: center;
+  min-width: 18px;
+  min-height: 100%;
+  cursor: pointer;
+}
+
+.word-end-toggle input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.word-end-toggle span {
+  width: 16px;
+  height: 28px;
+  border: 1px solid #aaa;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  color: #777;
+  line-height: 1;
+}
+
+.word-end-toggle:has(input:checked) span {
+  border-color: #111;
+  background: #111;
+  color: #fff;
+}
+
+.pen-badge {
+  position: absolute;
+  right: 2px;
+  bottom: 2px;
+  min-width: 1.15rem;
+  height: 1.15rem;
+  border: 1px solid currentColor;
+  background: #fff;
+  display: grid;
+  place-items: center;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  font-size: 0.62rem;
+  line-height: 1;
+  font-weight: 900;
+}
+
+.pen-1 .clue-letter {
+  text-decoration: underline;
+  text-decoration-thickness: 2px;
+}
+
+.pen-2 .clue-letter {
+  text-decoration: overline;
+  text-decoration-thickness: 2px;
+}
+
+.pen-3 .clue-letter {
+  font-style: italic;
+}
+
+.pen-4 .clue-letter {
+  text-decoration: underline overline;
+  text-decoration-thickness: 2px;
+}
+
+.pen-5 .pen-badge,
+.pen-6 .pen-badge {
+  border-radius: 999px;
+}
+
+.pen-7 .pen-badge {
+  border-style: dashed;
 }
 
 .planting-status {
@@ -991,13 +1172,6 @@ textarea {
   background: #f3e5d4;
 }
 
-.letter-sprite {
-  max-width: 100%;
-  height: 32px;
-  object-fit: contain;
-  display: block;
-}
-
 .holder {
   color: #655743;
   font-size: 0.84rem;
@@ -1010,16 +1184,43 @@ textarea {
   align-items: start;
 }
 
-.letter-fields {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(140px, 180px));
-  gap: 14px;
-  align-items: end;
-}
-
 .letter-form .button {
   width: min(220px, 100%);
   justify-self: end;
+}
+
+.inline-clue-form {
+  gap: 12px;
+}
+
+.player-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  align-items: center;
+  border-top: 1px solid #d8d8d8;
+  padding-top: 10px;
+}
+
+.legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--pen-color);
+  font-weight: 800;
+}
+
+.legend-sample {
+  position: relative;
+  width: 42px;
+  min-height: 34px;
+  border: 1px solid currentColor;
+  border-bottom-width: 3px;
+  border-radius: 4px;
+  display: grid;
+  place-items: center;
+  background: #fff;
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
 }
 
 .compare-list {
@@ -1063,25 +1264,6 @@ textarea {
   gap: 8px;
   padding: 10px 0 0;
   border-top: 1px dashed rgba(87, 64, 38, 0.28);
-}
-
-.spinner-sun {
-  width: 78px;
-  aspect-ratio: 1;
-  border-radius: 50%;
-  background: var(--gold);
-  box-shadow: 0 0 0 10px rgba(213, 169, 40, 0.22);
-}
-
-@keyframes sprout {
-  from {
-    transform: translateY(8px) scale(0.9);
-    opacity: 0;
-  }
-  to {
-    transform: translateY(0) scale(1);
-    opacity: 1;
-  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1237,11 +1419,6 @@ textarea {
     gap: 10px;
   }
 
-  .spinner-sun {
-    width: 64px;
-    box-shadow: 0 0 0 8px rgba(213, 169, 40, 0.22);
-  }
-
   .host-controls {
     gap: 10px;
     padding-bottom: 14px;
@@ -1294,10 +1471,6 @@ textarea {
 
   .paper-panel h1 {
     font-size: 2.15rem;
-  }
-
-  .letter-fields {
-    grid-template-columns: 1fr;
   }
 
   .letter-form .button {

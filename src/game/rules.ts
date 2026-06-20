@@ -22,24 +22,28 @@ export const SOWS_EAR_RULES: SowsEarRules = {
   fifthLetterBehavior: "guess-or-spoil",
 };
 
-export function ribbon(correct: boolean, depth: number): number {
+export function pointsForDepth(correct: boolean, depth: number): number {
   if (!correct || depth < 1 || depth > 5) return 0;
   return RIBBON_BY_DEPTH[depth as Depth];
 }
 
-export function countyFair(ribbons: number[]): number {
-  return [...ribbons]
+export function finalScoreFromPoints(points: number[]): number {
+  return [...points]
     .sort((a, b) => b - a)
     .slice(0, 5)
     .reduce((sum, r) => sum + r, 0);
 }
 
-export function harvestsForPlayerCount(playerCount: number): number {
+export function roundsForPlayerCount(playerCount: number): number {
   if (playerCount < 3 || playerCount > 8) {
     throw new RangeError("Sow's Ear supports 3-8 players.");
   }
   return playerCount * (playerCount <= 4 ? 2 : 1);
 }
+
+export const ribbon = pointsForDepth;
+export const countyFair = finalScoreFromPoints;
+export const harvestsForPlayerCount = roundsForPlayerCount;
 
 export function normalizeGuess(value: string, locale = "en-US"): string {
   return value
@@ -52,12 +56,12 @@ export function normalizeGuess(value: string, locale = "en-US"): string {
 }
 
 export function isValidLetter(value: string): boolean {
-  return value === "_" || /^\p{Letter}$/u.test(value);
+  return /^\p{Letter}$/u.test(value);
 }
 
 export function clampLetter(value: string): string {
   const trimmed = value.trim();
-  if (!trimmed) return "_";
-  const first = [...trimmed][0] ?? "_";
-  return isValidLetter(first) ? first.toLocaleUpperCase("en-US") : "_";
+  if (!trimmed) return "";
+  const first = [...trimmed][0] ?? "";
+  return isValidLetter(first) ? first.toLocaleUpperCase("en-US") : "";
 }

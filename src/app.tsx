@@ -33,10 +33,12 @@ import {
   normalizeHandle,
   reduceEvents,
   roleForHandle,
+  rowIsComplete,
+  rowsHeldForClue,
   roomSlugFrom,
 } from "./game/model";
-import { clampLetter, ribbon } from "./game/rules";
-import type { CommandResult, Game, RoomState, Round } from "./game/types";
+import { clampLetter, pointsForDepth } from "./game/rules";
+import type { ClueCellInput, CommandResult, Game, RoomState, Round, Row } from "./game/types";
 import { createEventStore, type EventStore } from "./store/event-store";
 
 type AppContext = {
@@ -100,7 +102,7 @@ type SowsEarState = {
   claimHost(): Promise<void>;
   chooseField(fieldId: string): Promise<void>;
   plantSeed(seed: string): Promise<void>;
-  plantLetters(letters: Map<number, string>): Promise<void>;
+  plantLetters(letters: Map<number, string | ClueCellInput>): Promise<void>;
   wait(): Promise<void>;
   spoil(): Promise<void>;
   submitGuess(guess: string, confirmed: boolean): Promise<void>;
@@ -122,6 +124,12 @@ type SowsEarState = {
 const APP_STORAGE_KEY = "sowsear:app";
 const PRESENCE_HEARTBEAT_MS = 15000;
 const PRESENCE_ONLINE_MS = 45000;
+const PEN_COLORS = ["#000000", "#0072b2", "#d55e00", "#009e73", "#cc79a7", "#e69f00", "#56b4e9", "#5f5f5f"] as const;
+
+type PenStyle = {
+  index: number;
+  color: string;
+};
 
 function createRuntime(): SowsEarRuntime {
   return {
@@ -647,19 +655,19 @@ function HelpDialog(): React.ReactElement {
         <div className="help-content">
           <section>
             <h2>Goal</h2>
-            <p>Work together to help the Farmer guess the Sower's secret answer from a category and a few letters.</p>
+            <p>Work together to help the guesser name the picker&apos;s answer from a category and a few clue cells.</p>
           </section>
           <section>
             <h2>Roles</h2>
-            <p>The Farmer sees the category and makes the guess. The Sower secretly enters the answer. Everyone else adds one letter to a row when it is their turn.</p>
+            <p>The guesser sees the category and makes the guess. The picker enters the answer. Every non-guesser adds one letter to each row they hold.</p>
           </section>
           <section>
-            <h2>Harvest</h2>
-            <p>Each row can grow to five letters. The Farmer may guess after every sprout, ask for one more letter, or mark the Harvest spoiled.</p>
+            <h2>Round</h2>
+            <p>Each row can grow to five cells. A cluer may mark the current cell with a period to end that row. The guesser may guess after each reveal, ask for one more cell, or pass.</p>
           </section>
           <section>
             <h2>Scoring</h2>
-            <p>Earlier correct guesses earn better Ribbons: 20, 10, 7, 5, then 3. Your County Fair score is the best five Ribbons in the Season.</p>
+            <p>Earlier correct guesses earn better points: 20, 10, 7, 5, then 3. The final score is the best five rounds in the game.</p>
           </section>
           <section>
             <h2>Rooms</h2>
@@ -753,11 +761,11 @@ function RoomHome(): React.ReactElement {
   return (
     <section className="room-grid">
       <div className="paper-panel">
-        <h1>Start a Season</h1>
+        <h1>Start a Game</h1>
         <p className="subtle">Create a new game, or review an earlier one.</p>
         <div className="action-row">
           <button type="button" className="button primary" onClick={() => void createSeason()} data-testid="create-season">
-            Create Season
+            Start Game
           </button>
         </div>
       </div>
@@ -781,8 +789,8 @@ function GameView({ game }: { game: Game }): React.ReactElement {
         <div className="play-surface">
           <section className="paper-panel wait-panel" data-testid="paused-panel">
             <p className="eyebrow">Paused</p>
-            <h1>Season Paused</h1>
-            <p className="subtle">The host paused this Season. Current Harvest state is preserved.</p>
+            <h1>Game Paused</h1>
+            <p className="subtle">The host paused this game. Current round state is preserved.</p>
             {normalizeHandle(game.hostHandle) === normalizeHandle(context.handle) ? (
               <button type="button" className="button primary" onClick={() => void resumeSeason()} data-testid="resume-season">
                 Resume
@@ -822,15 +830,15 @@ function Lobby({ game }: { game: Game }): React.ReactElement {
   return (
     <section className="room-grid">
       <div className="paper-panel">
-        <p className="eyebrow">Season Lobby</p>
+        <p className="eyebrow">Game Lobby</p>
         <h1>{context.roomSlug}</h1>
         <p className="subtle">{readyCount} ready. Start needs 3-8 ready players.</p>
         <div className="rules-summary" data-testid="rules-summary">
           <p>
-            <strong>Field pack:</strong> Starter Fields ({STARTER_FIELDS.length})
+            <strong>Category pack:</strong> Starter Categories ({STARTER_FIELDS.length})
           </p>
           <p>
-            <strong>Rules:</strong> 3-8 players, five letters max, Ribbons 20/10/7/5/3, County Fair best five.
+            <strong>Rules:</strong> 3-8 players, five cells max, points 20/10/7/5/3, final score uses the best five rounds.
           </p>
         </div>
         <div className="action-row">
@@ -840,12 +848,12 @@ function Lobby({ game }: { game: Game }): React.ReactElement {
             </button>
           ) : (
             <button type="button" className="button primary" onClick={() => void joinSeason()} data-testid="join-season">
-              Join Season
+              Join Game
             </button>
           )}
           {isHost ? (
             <button type="button" className="button primary" onClick={() => void startSeason()} data-testid="start-season" disabled={!canStart} aria-disabled={!canStart}>
-              Start Season
+              Start Game
             </button>
           ) : null}
           {!isHost && me && !isHandleOnline(game.hostHandle, context, roomState, now) ? (
@@ -902,12 +910,12 @@ function Lobby({ game }: { game: Game }): React.ReactElement {
 function StatusRail({ game, round, role }: { game: Game; round: Round; role: string }): React.ReactElement {
   const context = useSowsEarStore((state) => state.context);
   const score = game.ribbons.reduce((sum, value) => sum + value, 0);
-  const currentRibbon = ribbon(true, round.depth);
+  const currentPoints = pointsForDepth(true, round.depth);
   return (
     <aside className="status-rail">
       <div className="paper-panel status-card">
         <div className="status-card-header">
-          <p className="eyebrow">Harvest {round.roundNumber} of {game.totalHarvests}</p>
+          <p className="eyebrow">Round {round.roundNumber} of {game.totalHarvests}</p>
         </div>
         <div className="status-card-body">
           <div className="role-summary">
@@ -915,15 +923,15 @@ function StatusRail({ game, round, role }: { game: Game; round: Round; role: str
             <p>{context.handle}</p>
           </div>
           <div className="score-inline">
-            <span>Ribbons</span>
+            <span>Points</span>
             <strong>{score}</strong>
           </div>
         </div>
       </div>
-      <div className="paper-panel ribbon-ladder" aria-label="Ribbon ladder">
+      <div className="paper-panel ribbon-ladder" aria-label="Point ladder">
         <div className="ribbon-ladder-heading">
-          <span>Ribbon Ladder</span>
-          <strong>Current {currentRibbon}</strong>
+          <span>Point Ladder</span>
+          <strong>Current {currentPoints}</strong>
         </div>
         <div className="token-stack">
           {[20, 10, 7, 5, 3].map((value) => (
@@ -961,7 +969,7 @@ function HostControls({ game }: { game: Game }): React.ReactElement | null {
           </button>
         )}
         <button type="button" className="button danger" onClick={() => void voidHarvest()} data-testid="void-harvest">
-          Void Harvest
+          Void Round
         </button>
       </div>
       <label>
@@ -1001,37 +1009,36 @@ function HostRecoveryControls({ game }: { game: Game }): React.ReactElement | nu
 }
 
 function PhasePanel({ game, round, role }: { game: Game; round: Round; role: string }): React.ReactElement {
-  const fieldTitle = round.fieldLabel || "Field";
+  const fieldTitle = round.fieldLabel || "Category";
   if (round.phase === "field-choice") {
-    if (role === "farmer") return <FieldChoice round={round} />;
-    return <WaitPanel message="The Farmer is choosing a Field." />;
+    if (role === "guesser") return <FieldChoice round={round} />;
+    return <WaitPanel message="The guesser is choosing a category." />;
   }
   if (round.phase === "seed") {
-    if (role === "sower") return <SeedPanel fieldTitle={fieldTitle} />;
+    if (role === "picker") return <AnswerPanel fieldTitle={fieldTitle} />;
     return (
       <section className="paper-panel wait-panel">
         <p className="eyebrow">Category</p>
         <div className="phase-title-row">
-          <div className="spinner-sun" aria-hidden="true"></div>
           <div>
             <h1>{fieldTitle}</h1>
-            <p className="subtle">The Sower is planting the seed.</p>
+            <p className="subtle">The picker is choosing the answer.</p>
           </div>
         </div>
       </section>
     );
   }
-  if (round.phase === "planting") return <PlantingPanel round={round} role={role} fieldTitle={fieldTitle} />;
-  if (round.phase === "farmer-call") return <FarmerCallPanel round={round} role={role} fieldTitle={fieldTitle} />;
-  if (round.phase === "adjudication") return <AdjudicationPanel round={round} role={role} fieldTitle={fieldTitle} />;
-  return <HarvestRecap game={game} round={round} />;
+  if (round.phase === "planting") return <PlantingPanel game={game} round={round} role={role} fieldTitle={fieldTitle} />;
+  if (round.phase === "farmer-call") return <GuesserCallPanel game={game} round={round} role={role} fieldTitle={fieldTitle} />;
+  if (round.phase === "adjudication") return <AdjudicationPanel game={game} round={round} role={role} fieldTitle={fieldTitle} />;
+  return <RoundRecap game={game} round={round} />;
 }
 
 function FieldChoice({ round }: { round: Round }): React.ReactElement {
   const chooseField = useSowsEarStore((state) => state.chooseField);
   return (
     <section className="paper-panel">
-      <p className="eyebrow">Choose a Field</p>
+      <p className="eyebrow">Choose a Category</p>
       <h1>Pick the search space</h1>
       <div className="field-options">
         {round.fieldOptions.map((fieldId) => (
@@ -1045,7 +1052,7 @@ function FieldChoice({ round }: { round: Round }): React.ReactElement {
   );
 }
 
-function SeedPanel({ fieldTitle }: { fieldTitle: string }): React.ReactElement {
+function AnswerPanel({ fieldTitle }: { fieldTitle: string }): React.ReactElement {
   const plantSeed = useSowsEarStore((state) => state.plantSeed);
   return (
     <section className="paper-panel">
@@ -1059,63 +1066,58 @@ function SeedPanel({ fieldTitle }: { fieldTitle: string }): React.ReactElement {
         }}
       >
         <label>
-          Secret Answer
+          Answer
           <input name="seed" autoComplete="off" maxLength={80} required data-testid="seed-input" />
         </label>
         <p className="hint">Long phrases and obscure proper nouns are hard to clue fairly.</p>
         <button type="submit" className="button primary" data-testid="plant-seed">
-          Submit
+          Lock Answer
         </button>
       </form>
     </section>
   );
 }
 
-function PlantingPanel({ round, role, fieldTitle }: { round: Round; role: string; fieldTitle: string }): React.ReactElement {
+function PlantingPanel({ game, round, role, fieldTitle }: { game: Game; round: Round; role: string; fieldTitle: string }): React.ReactElement {
   const context = useSowsEarStore((state) => state.context);
   const plantLetters = useSowsEarStore((state) => state.plantLetters);
-  const heldRows = round.rows.filter(
-    (row) =>
-      normalizeHandle(row.currentHolderHandle) === normalizeHandle(context.handle) &&
-      !round.entries.some((entry) => entry.rowIndex === row.rowIndex && entry.depth === round.depth),
-  );
+  const heldRows = rowsHeldForClue(round, context.handle);
   return (
     <section className="paper-panel board-panel">
       <p className="eyebrow">Category</p>
       <h1>{fieldTitle}</h1>
-      {role === "farmer" ? null : (
+      {role === "guesser" ? null : (
         <p className="seed-line">
-          Seed: <strong>{round.seedRaw}</strong>
+          Answer: <strong>{round.seedRaw}</strong>
         </p>
       )}
-      <Rows round={round} revealAll={false} />
-      <PlantingStatus round={round} />
       {heldRows.length ? (
         <form
-          className="letter-form"
+          className="letter-form inline-clue-form"
           onSubmit={(event) => {
             event.preventDefault();
-            const letters = new Map<number, string>();
-            for (const [name, value] of new FormData(event.currentTarget)) {
-              if (name.startsWith("row-") && typeof value === "string") letters.set(Number(name.slice(4)), clampLetter(value));
+            const form = event.currentTarget;
+            const letters = new Map<number, ClueCellInput>();
+            for (const row of heldRows) {
+              const letter = clampLetter(formValue(form, `letter-${row.rowIndex}`));
+              const endsWord = new FormData(form).get(`end-${row.rowIndex}`) === "on";
+              if (letter) letters.set(row.rowIndex, { letter, endsWord });
             }
             void plantLetters(letters);
           }}
         >
-          <div className="letter-fields">
-            {heldRows.map((row) => (
-              <label key={row.rowIndex}>
-                Row {row.rowIndex + 1}
-                <input name={`row-${row.rowIndex}`} maxLength={2} autoComplete="off" required data-testid={`letter-input-${row.rowIndex}`} />
-              </label>
-            ))}
-          </div>
+          <Rows game={game} round={round} revealAll={false} editableRows={heldRows} />
+          <PlantingStatus round={round} />
           <button className="button primary" type="submit" data-testid="submit-letters">
-            Submit
+            Submit Clues
           </button>
         </form>
       ) : (
-        <p className="subtle">{role === "farmer" ? "The Hands are tending the rows..." : "Waiting for the handoff."}</p>
+        <>
+          <Rows game={game} round={round} revealAll={false} />
+          <PlantingStatus round={round} />
+          <p className="subtle">{role === "guesser" ? "The cluers are adding letters." : "Waiting for the handoff."}</p>
+        </>
       )}
     </section>
   );
@@ -1130,6 +1132,7 @@ function PlantingStatus({ round }: { round: Round }): React.ReactElement | null 
     <div className="planting-status" data-testid="planting-status" aria-label="Planting status">
       {round.rows.map((row) => {
         const entry = round.entries.find((item) => item.rowIndex === row.rowIndex && item.depth === round.depth);
+        const complete = rowIsComplete(round, row.rowIndex);
         const handle = entry?.handle ?? row.currentHolderHandle;
         const online = isHandleOnline(handle, context, roomState, now);
         return (
@@ -1137,12 +1140,12 @@ function PlantingStatus({ round }: { round: Round }): React.ReactElement | null 
             key={row.rowIndex}
             className={`planting-status-item ${entry ? "planted" : "waiting"}`}
             data-testid={`planting-status-${row.rowIndex}`}
-            data-state={entry ? "planted" : "waiting"}
+            data-state={complete ? "complete" : entry ? "planted" : "waiting"}
             data-presence={online ? "online" : "offline"}
           >
             <span>Row {row.rowIndex + 1}</span>
             <strong>{handle}</strong>
-            <span>{entry ? "Planted" : online ? "Waiting" : "Waiting (offline)"}</span>
+            <span>{complete ? "Complete" : entry ? "Submitted" : online ? "Waiting" : "Waiting (offline)"}</span>
           </div>
         );
       })}
@@ -1150,7 +1153,7 @@ function PlantingStatus({ round }: { round: Round }): React.ReactElement | null 
   );
 }
 
-function FarmerCallPanel({ round, role, fieldTitle }: { round: Round; role: string; fieldTitle: string }): React.ReactElement {
+function GuesserCallPanel({ game, round, role, fieldTitle }: { game: Game; round: Round; role: string; fieldTitle: string }): React.ReactElement {
   const pendingGuess = useSowsEarStore((state) => state.pendingGuess);
   const submitGuess = useSowsEarStore((state) => state.submitGuess);
   const wait = useSowsEarStore((state) => state.wait);
@@ -1160,10 +1163,10 @@ function FarmerCallPanel({ round, role, fieldTitle }: { round: Round; role: stri
       <p className="eyebrow">Category</p>
       <h1>{fieldTitle}</h1>
       <p className="ribbon-callout" data-testid="current-ribbon">
-        Current Ribbon: {ribbon(true, round.depth)}
+        Current Points: {pointsForDepth(true, round.depth)}
       </p>
-      <Rows round={round} revealAll={false} />
-      {role === "farmer" ? (
+      <Rows game={game} round={round} revealAll={false} />
+      {role === "guesser" ? (
         <>
           <form
             className="compact-form guess-form"
@@ -1179,7 +1182,7 @@ function FarmerCallPanel({ round, role, fieldTitle }: { round: Round; role: stri
             {pendingGuess ? (
               <>
                 <p className="hint" data-testid="guess-confirmation">
-                  Submitting ends the Harvest if it is not accepted.
+                  Submitting ends the round if it is not accepted.
                 </p>
                 <input type="hidden" name="confirmed" value="true" />
                 <button className="button primary" type="submit" data-testid="confirm-guess">
@@ -1195,35 +1198,35 @@ function FarmerCallPanel({ round, role, fieldTitle }: { round: Round; role: stri
           <div className="action-row">
             {round.depth < 5 ? (
               <button type="button" className="button secondary" onClick={() => void wait()} data-testid="one-more-letter">
-                One More Letter
+                One More Cell
               </button>
             ) : null}
             <button type="button" className="button danger" onClick={() => void spoil()} data-testid="spoil">
-              Spoiled
+              Pass
             </button>
           </div>
         </>
       ) : (
         <>
           <p className="seed-line">
-            Seed: <strong>{round.seedRaw}</strong>
+            Answer: <strong>{round.seedRaw}</strong>
           </p>
-          <p className="subtle">The Farmer is deciding.</p>
+          <p className="subtle">The guesser is deciding.</p>
         </>
       )}
     </section>
   );
 }
 
-function AdjudicationPanel({ round, role, fieldTitle }: { round: Round; role: string; fieldTitle: string }): React.ReactElement {
+function AdjudicationPanel({ game, round, role, fieldTitle }: { game: Game; round: Round; role: string; fieldTitle: string }): React.ReactElement {
   const adjudicate = useSowsEarStore((state) => state.adjudicate);
-  if (role === "sower") {
+  if (role === "picker") {
     return (
       <section className="paper-panel">
         <p className="eyebrow">Adjudication</p>
         <h1>Does this count?</h1>
         <dl className="compare-list">
-          <dt>Seed</dt>
+          <dt>Answer</dt>
           <dd>{round.seedRaw}</dd>
           <dt>Guess</dt>
           <dd>{round.guessRaw}</dd>
@@ -1239,56 +1242,56 @@ function AdjudicationPanel({ round, role, fieldTitle }: { round: Round; role: st
       </section>
     );
   }
-  if (role === "farmer") {
+  if (role === "guesser") {
     return (
       <section className="paper-panel board-panel">
         <p className="eyebrow">Category</p>
         <h1>{fieldTitle}</h1>
-        <Rows round={round} revealAll={false} />
+        <Rows game={game} round={round} revealAll={false} />
         <dl className="compare-list">
           <dt>Guess</dt>
           <dd data-testid="adjudication-guess">{round.guessRaw}</dd>
         </dl>
-        <p className="subtle">The Sower is judging the Guess.</p>
+        <p className="subtle">The picker is judging the guess.</p>
       </section>
     );
   }
   return (
     <section className="paper-panel wait-panel">
-      <div className="spinner-sun" aria-hidden="true"></div>
       <p className="seed-line">
-        Seed: <strong>{round.seedRaw}</strong>
+        Answer: <strong>{round.seedRaw}</strong>
       </p>
-      <p className="subtle">The Sower is judging the Guess.</p>
+      <p className="subtle">The picker is judging the guess.</p>
     </section>
   );
 }
 
-function HarvestRecap({ game, round }: { game: Game; round: Round }): React.ReactElement {
+function RoundRecap({ game, round }: { game: Game; round: Round }): React.ReactElement {
   const context = useSowsEarStore((state) => state.context);
   const advance = useSowsEarStore((state) => state.advance);
   const isHost = normalizeHandle(game.hostHandle) === normalizeHandle(context.handle);
   return (
     <section className="paper-panel board-panel">
-      <p className="eyebrow">Harvest Recap</p>
-      <h1>{round.accepted ? recapLine(round.depth) : "Still just a sow's ear."}</h1>
+      <p className="eyebrow">Round Recap</p>
+      <h1>{round.accepted ? recapLine(round.depth) : "No match this time."}</h1>
       <dl className="compare-list">
         <dt>Category</dt>
         <dd>{round.fieldLabel}</dd>
-        <dt>Seed</dt>
+        <dt>Answer</dt>
         <dd data-testid="revealed-seed">{round.seedRaw}</dd>
         <dt>Guess</dt>
-        <dd>{round.guessRaw || "Spoiled"}</dd>
-        <dt>Ribbon</dt>
+        <dd>{round.guessRaw || "Passed"}</dd>
+        <dt>Points</dt>
         <dd>{round.ribbon ?? 0}</dd>
       </dl>
       <p className="score-note" data-testid="running-county-fair">
-        County Fair so far: {finalScore(game)} / 100
+        Final score so far: {finalScore(game)} / 100
       </p>
-      <Rows round={round} revealAll={true} />
+      <Rows game={game} round={round} revealAll={true} />
+      <PlayerLegend game={game} />
       {isHost ? (
         <button type="button" className="button primary" onClick={() => void advance()} data-testid="advance">
-          {round.roundNumber >= game.totalHarvests ? "County Fair" : "Next Harvest"}
+          {round.roundNumber >= game.totalHarvests ? "Final Score" : "Next Round"}
         </button>
       ) : (
         <p className="subtle">Waiting for the host.</p>
@@ -1304,14 +1307,14 @@ function Final({ game }: { game: Game }): React.ReactElement {
   return (
     <section className="room-grid">
       <div className="paper-panel final-panel">
-        <p className="eyebrow">County Fair</p>
+        <p className="eyebrow">Final Score</p>
         <h1>{finalScore(game)} / 100</h1>
         <div className="score-ledger">
           <p data-testid="all-ribbons">
-            <strong>Every Ribbon:</strong> {game.ribbons.join(", ") || "none"}
+            <strong>Every Round:</strong> {game.ribbons.join(", ") || "none"}
           </p>
           <p data-testid="counted-ribbons">
-            <strong>Counted Ribbons:</strong> {topFive(game.ribbons).join(", ") || "none"}
+            <strong>Counted Rounds:</strong> {topFive(game.ribbons).join(", ") || "none"}
           </p>
         </div>
         <label>
@@ -1338,7 +1341,7 @@ function Review({ game }: { game: Game }): React.ReactElement {
       <div className="panel-header">
         <div>
           <p className="eyebrow">Room History</p>
-          <h1>Season Review</h1>
+          <h1>Game Review</h1>
         </div>
         {context.reviewGameId ? (
           <button type="button" className="button quiet" onClick={leaveReview}>
@@ -1347,18 +1350,19 @@ function Review({ game }: { game: Game }): React.ReactElement {
         ) : null}
       </div>
       <p className="subtle" data-testid="review-final-score">
-        Final County Fair {finalScore(game)} / 100
+        Final score {finalScore(game)} / 100
       </p>
       <div className="review-list">
         {game.rounds.map((round) => (
           <article className="review-item" key={round.id}>
-            <h2>Harvest {round.roundNumber}: {round.fieldLabel || "Field"}</h2>
+            <h2>Round {round.roundNumber}: {round.fieldLabel || "Category"}</h2>
             <p>
-              Seed: <strong>{round.seedRaw || ""}</strong>
+              Answer: <strong>{round.seedRaw || ""}</strong>
             </p>
-            <p>Guess: {round.guessRaw || "Spoiled"} · Ribbon {round.ribbon ?? 0}</p>
-            <Rows round={round} revealAll={true} />
-            <Replay round={round} />
+            <p>Guess: {round.guessRaw || "Passed"} · Points {round.ribbon ?? 0}</p>
+            <Rows game={game} round={round} revealAll={true} />
+            <PlayerLegend game={game} />
+            <Replay game={game} round={round} />
           </article>
         ))}
       </div>
@@ -1366,7 +1370,7 @@ function Review({ game }: { game: Game }): React.ReactElement {
   );
 }
 
-function Replay({ round }: { round: Round }): React.ReactElement | null {
+function Replay({ game, round }: { game: Game; round: Round }): React.ReactElement | null {
   const maxDepth = Math.max(0, ...round.entries.map((entry) => entry.depth));
   if (!maxDepth) return null;
   return (
@@ -1376,8 +1380,8 @@ function Replay({ round }: { round: Round }): React.ReactElement | null {
         const depth = index + 1;
         return (
           <section className="replay-step" data-testid={`replay-step-${round.roundNumber}-${depth}`} key={depth}>
-            <h4>Sprout {depth}</h4>
-            <Rows round={round} revealAll={true} maxVisibleDepth={depth} />
+            <h4>Cell {depth}</h4>
+            <Rows game={game} round={round} revealAll={true} maxVisibleDepth={depth} />
           </section>
         );
       })}
@@ -1385,33 +1389,56 @@ function Replay({ round }: { round: Round }): React.ReactElement | null {
   );
 }
 
-function Rows({ round, revealAll, maxVisibleDepth }: { round: Round; revealAll: boolean; maxVisibleDepth?: number }): React.ReactElement {
+function Rows({
+  game,
+  round,
+  revealAll,
+  maxVisibleDepth,
+  editableRows = [],
+}: {
+  game: Game;
+  round: Round;
+  revealAll: boolean;
+  maxVisibleDepth?: number;
+  editableRows?: Row[];
+}): React.ReactElement {
+  const editableRowIndexes = new Set(editableRows.map((row) => row.rowIndex));
   return (
     <div className="rows" data-testid="rows">
       {round.rows.map((row) => {
         const entries = [1, 2, 3, 4, 5].map((depth) => round.entries.find((entry) => entry.rowIndex === row.rowIndex && entry.depth === depth));
-        const contributionEntries = entries.filter((entry) => entry && (maxVisibleDepth === undefined || entry.depth <= maxVisibleDepth));
+        const editable = editableRowIndexes.has(row.rowIndex);
         return (
-          <div className="hint-row" key={row.rowIndex}>
+          <div className={`hint-row ${revealAll ? "reveal" : ""} ${rowIsComplete(round, row.rowIndex) ? "complete" : ""}`} key={row.rowIndex}>
             <span className="row-number">{row.rowIndex + 1}</span>
             <div className="row-main">
               <div className="slots" aria-label={`Row ${row.rowIndex + 1}`}>
                 {entries.map((entry, index) => {
                   const visible = entry && (maxVisibleDepth === undefined ? entry.sprouted || revealAll : entry.depth <= maxVisibleDepth);
+                  const isEditableCell = editable && index === round.depth - 1 && !entry;
+                  const pen = visible && entry ? penForHandle(game, entry.handle) : undefined;
                   return (
-                    <span className={`slot ${visible ? "filled" : ""}`} key={index}>
-                      {visible ? <LetterGlyph letter={entry.letter} /> : null}
+                    <span
+                      className={`slot ${visible ? "filled" : ""} ${isEditableCell ? "editing" : ""} ${pen ? `pen-${pen.index}` : ""}`}
+                      style={pen ? penStyleVars(pen) : undefined}
+                      key={index}
+                      data-testid={`clue-cell-${row.rowIndex}-${index + 1}`}
+                    >
+                      {isEditableCell ? (
+                        <ClueCellInputControl rowIndex={row.rowIndex} />
+                      ) : visible && entry ? (
+                        <ClueCellText letter={entry.letter} endsWord={entry.endsWord} handle={entry.handle} />
+                      ) : (
+                        <span className="clue-placeholder" aria-hidden="true">
+                          _
+                        </span>
+                      )}
                     </span>
                   );
                 })}
               </div>
-              {revealAll ? (
-                <p className="row-contributors" data-testid="row-contributors">
-                  {contributionEntries.map((entry) => `${entry!.depth}: ${entry!.letter} by ${entry!.handle}`).join(" / ")}
-                </p>
-              ) : null}
             </div>
-            <span className="holder">{row.currentHolderHandle}</span>
+            {revealAll ? null : <span className="holder">{row.currentHolderHandle}</span>}
           </div>
         );
       })}
@@ -1419,9 +1446,66 @@ function Rows({ round, revealAll, maxVisibleDepth }: { round: Round; revealAll: 
   );
 }
 
-function LetterGlyph({ letter }: { letter: string }): React.ReactNode {
-  if (/^[A-Z]$/.test(letter)) return <img className="letter-sprite" src={`./assets/letters/${letter}.png`} alt={letter} />;
-  return letter;
+function ClueCellInputControl({ rowIndex }: { rowIndex: number }): React.ReactElement {
+  return (
+    <span className="cell-editor">
+      <input
+        name={`letter-${rowIndex}`}
+        className="clue-letter-input"
+        maxLength={1}
+        autoComplete="off"
+        required
+        aria-label={`Row ${rowIndex + 1} next letter`}
+        data-testid={`letter-input-${rowIndex}`}
+        onInput={(event) => {
+          event.currentTarget.value = clampLetter(event.currentTarget.value);
+        }}
+        onKeyDown={(event) => {
+          if (event.key !== ".") return;
+          event.preventDefault();
+          const checkbox = event.currentTarget.form?.elements.namedItem(`end-${rowIndex}`);
+          if (checkbox instanceof HTMLInputElement) checkbox.checked = !checkbox.checked;
+        }}
+      />
+      <label className="word-end-toggle" title="Mark this cell as the end of a word">
+        <input type="checkbox" name={`end-${rowIndex}`} data-testid={`word-end-${rowIndex}`} />
+        <span>.</span>
+      </label>
+    </span>
+  );
+}
+
+function ClueCellText({ letter, endsWord, handle }: { letter: string; endsWord: boolean; handle: string }): React.ReactElement {
+  return (
+    <>
+      <span className="clue-letter" aria-label={`${letter}${endsWord ? " word end" : ""}`}>
+        {letter}
+        {endsWord ? "." : ""}
+      </span>
+      <span className="pen-badge" aria-label={`by ${handle}`}>
+        {handle.slice(0, 1).toLocaleUpperCase("en-US")}
+      </span>
+    </>
+  );
+}
+
+function PlayerLegend({ game }: { game: Game }): React.ReactElement {
+  return (
+    <div className="player-legend" data-testid="player-legend" aria-label="Player pen styles">
+      {game.players.map((player) => {
+        const pen = penForHandle(game, player.handle);
+        return (
+          <span key={player.handle} className={`legend-item pen-${pen.index}`} style={penStyleVars(pen)}>
+            <span className="legend-sample">
+              <span className="clue-letter">A</span>
+              <span className="pen-badge">{player.displayName.slice(0, 1).toLocaleUpperCase("en-US")}</span>
+            </span>
+            <span>{player.displayName}</span>
+          </span>
+        );
+      })}
+    </div>
+  );
 }
 
 function History(): React.ReactElement {
@@ -1435,7 +1519,7 @@ function History(): React.ReactElement {
         <ul className="history-list">
           {completeGames.map((game) => (
             <li key={game.id}>
-              <span>Season {new Date(game.createdAt).toLocaleDateString()}</span>
+              <span>Game {new Date(game.createdAt).toLocaleDateString()}</span>
               <button type="button" className="button quiet" onClick={() => reviewGame(game.id)}>
                 Review {finalScore(game)}
               </button>
@@ -1443,7 +1527,7 @@ function History(): React.ReactElement {
           ))}
         </ul>
       ) : (
-        <p className="subtle">Quiet season. Plant something next time.</p>
+        <p className="subtle">No completed games in this room yet.</p>
       )}
     </div>
   );
@@ -1452,7 +1536,6 @@ function History(): React.ReactElement {
 function WaitPanel({ message }: { message: string }): React.ReactElement {
   return (
     <section className="paper-panel wait-panel">
-      <div className="spinner-sun" aria-hidden="true"></div>
       <h1>{message}</h1>
     </section>
   );
@@ -1463,7 +1546,7 @@ function handleRootKeyDown(event: React.KeyboardEvent<HTMLElement>): void {
   if (!(target instanceof HTMLElement)) return;
   if (event.key === "Enter" && target instanceof HTMLInputElement && target.form) {
     if (target.form.classList.contains("letter-form")) {
-      const inputs = Array.from(target.form.querySelectorAll<HTMLInputElement>('input[name^="row-"]'));
+      const inputs = Array.from(target.form.querySelectorAll<HTMLInputElement>('input[name^="letter-"]'));
       const nextEmpty = inputs.find((input) => input !== target && !input.value.trim());
       if (nextEmpty) {
         event.preventDefault();
@@ -1569,12 +1652,34 @@ function titleCase(value: string): string {
 
 function recapLine(depth: number): string {
   if (depth === 1) return "A silk purse out of a sow's ear!";
-  if (depth <= 3) return "Now that's a fine harvest.";
-  return "Brought it in just in time.";
+  if (depth <= 3) return "Solved from a few letters.";
+  return "Solved just in time.";
 }
 
 function topFive(ribbons: number[]): number[] {
   return [...ribbons].sort((a, b) => b - a).slice(0, 5);
+}
+
+function penForHandle(game: Game, handle: string): PenStyle {
+  const normalizedHandle = normalizeHandle(handle);
+  const orderedPlayers = [...game.players].sort((a, b) => a.seatNumber - b.seatNumber);
+  const playerIndex = orderedPlayers.findIndex((player) => player.normalizedHandle === normalizedHandle);
+  const index = playerIndex >= 0 ? playerIndex : hashString(normalizedHandle) % PEN_COLORS.length;
+  const penIndex = index % PEN_COLORS.length;
+  return {
+    index: penIndex,
+    color: PEN_COLORS[penIndex] ?? PEN_COLORS[0],
+  };
+}
+
+function penStyleVars(pen: PenStyle): React.CSSProperties {
+  return { "--pen-color": pen.color } as React.CSSProperties;
+}
+
+function hashString(value: string): number {
+  let hash = 0;
+  for (const char of value) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
+  return hash;
 }
 
 function playerForGame(game: Game, handle: string): boolean {
@@ -1638,8 +1743,8 @@ function isFocusable(element: HTMLElement): boolean {
 }
 
 function seasonSummary(game: Game): string {
-  const ribbons = game.ribbons.map((ribbonValue, index) => `Harvest ${index + 1}: ${ribbonValue}`).join(", ");
-  return `Sow's Ear County Fair ${finalScore(game)} / 100\nBest five Ribbons: ${topFive(game.ribbons).join(", ") || "none"}\n${ribbons || "No Harvests yet."}`;
+  const points = game.ribbons.map((pointValue, index) => `Round ${index + 1}: ${pointValue}`).join(", ");
+  return `Sow's Ear Final Score ${finalScore(game)} / 100\nBest five rounds: ${topFive(game.ribbons).join(", ") || "none"}\n${points || "No rounds yet."}`;
 }
 
 export function startApp(): void {
@@ -1651,6 +1756,6 @@ export function startApp(): void {
 
 function startFieldCountGuard(): void {
   if (STARTER_FIELDS.length < 120) {
-    console.warn(`Starter Field pack has ${STARTER_FIELDS.length} Fields; launch target is 120-200.`);
+    console.warn(`Starter category pack has ${STARTER_FIELDS.length} categories; launch target is 120-200.`);
   }
 }

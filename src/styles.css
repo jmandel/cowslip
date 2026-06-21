@@ -635,8 +635,29 @@ textarea {
   padding: 8px 10px;
 }
 
-.player-selection-panel .seat-list li {
-  grid-template-columns: minmax(0, 1fr) auto auto;
+.selected-seat-list li {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 10px;
+}
+
+.available-seat-list li {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.seat-number {
+  width: 30px;
+  aspect-ratio: 1;
+  border: 1px solid #111;
+  display: inline-grid;
+  place-items: center;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.seat-body {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
 }
 
 .seat-primary,
@@ -659,6 +680,17 @@ textarea {
 .seat-actions {
   display: inline-flex;
   gap: 4px;
+  justify-content: end;
+}
+
+.seat-action {
+  width: 32px;
+  height: 32px;
+  min-height: 32px;
+}
+
+.remove-seat-action {
+  color: #8f2d1f;
 }
 
 .presence {
@@ -1192,8 +1224,12 @@ textarea {
     grid-column: 1;
   }
 
-  .seat-list li {
-    grid-template-columns: 1fr;
+  .selected-seat-list li {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+
+  .available-seat-list li {
+    grid-template-columns: minmax(0, 1fr) auto;
   }
 
   .action-row,

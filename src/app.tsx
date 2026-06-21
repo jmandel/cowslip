@@ -1,6 +1,6 @@
 import React, { useEffect, useLayoutEffect, useRef } from "react";
 import { createRoot } from "react-dom/client";
-import { Check, CircleHelp, Copy, Home, LogOut, UserPen, X } from "lucide-react";
+import { ArrowDown, ArrowUp, Check, CircleHelp, Copy, Home, LogOut, UserMinus, UserPen, UserPlus, X } from "lucide-react";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { categoryLabel } from "./content/categories";
@@ -926,7 +926,7 @@ function Lobby({ game }: { game: Game }): React.ReactElement {
       </div>
       <div className="paper-panel player-selection-panel">
         <div className="section-heading-row">
-          <h2>Selected Players</h2>
+          <h2>Playing Order</h2>
           {selectedCount > 1 ? (
             <button type="button" className="button secondary lobby-randomize" onClick={() => void randomizeSeats()} data-testid="randomize-seats">
               Randomize
@@ -934,49 +934,68 @@ function Lobby({ game }: { game: Game }): React.ReactElement {
           ) : null}
         </div>
         {selectedPlayers.length ? (
-          <ol className="seat-list">
-            {selectedPlayers.map((player) => {
-            const online = isHandleOnline(player.handle, context, presence, now);
-            return (
-              <li key={player.handle} data-testid={`seat-${player.handle}`} data-presence={online ? "online" : "offline"}>
-                <span className="seat-primary" data-testid="seat-name">{player.displayName}</span>
-                <span className="seat-meta">
-                  <span className={`presence ${online ? "online" : "offline"}`} data-testid={`presence-${player.handle}`}>
-                    {online ? "Online" : "Offline"}
+          <ol className="seat-list selected-seat-list">
+            {selectedPlayers.map((player, index) => {
+              const online = isHandleOnline(player.handle, context, presence, now);
+              return (
+                <li key={player.handle} data-testid={`seat-${player.handle}`} data-presence={online ? "online" : "offline"}>
+                  <span className="seat-number" aria-label={`Seat ${index + 1}`}>{index + 1}</span>
+                  <span className="seat-body">
+                    <span className="seat-primary" data-testid="seat-name">{player.displayName}</span>
+                    <span className="seat-meta">
+                      <span className={`presence ${online ? "online" : "offline"}`} data-testid={`presence-${player.handle}`}>
+                        {online ? "Online" : "Offline"}
+                      </span>
+                    </span>
                   </span>
-                </span>
-                <span className="seat-actions">
-                  <button type="button" className="button icon-button" aria-label={`Move ${player.displayName} up`} onClick={() => void moveSeat(player.handle, "up")} data-testid={`seat-up-${player.handle}`}>
-                    ^
-                  </button>
-                  <button type="button" className="button icon-button" aria-label={`Move ${player.displayName} down`} onClick={() => void moveSeat(player.handle, "down")} data-testid={`seat-down-${player.handle}`}>
-                    v
-                  </button>
-                  <button type="button" className="button icon-button" aria-label={`Remove ${player.displayName}`} onClick={() => void selectPlayer(player.handle, false)} data-testid={`exclude-player-${player.handle}`}>
-                    <X size={16} aria-hidden="true" />
-                  </button>
-                </span>
-              </li>
-            );
+                  <span className="seat-actions">
+                    <button
+                      type="button"
+                      className="button icon-button seat-action"
+                      aria-label={`Move ${player.displayName} up`}
+                      onClick={() => void moveSeat(player.handle, "up")}
+                      data-testid={`seat-up-${player.handle}`}
+                      disabled={index === 0}
+                    >
+                      <ArrowUp size={16} aria-hidden="true" />
+                    </button>
+                    <button
+                      type="button"
+                      className="button icon-button seat-action"
+                      aria-label={`Move ${player.displayName} down`}
+                      onClick={() => void moveSeat(player.handle, "down")}
+                      data-testid={`seat-down-${player.handle}`}
+                      disabled={index === selectedPlayers.length - 1}
+                    >
+                      <ArrowDown size={16} aria-hidden="true" />
+                    </button>
+                    <button type="button" className="button icon-button seat-action remove-seat-action" aria-label={`Remove ${player.displayName} from game`} onClick={() => void selectPlayer(player.handle, false)} data-testid={`exclude-player-${player.handle}`}>
+                      <UserMinus size={16} aria-hidden="true" />
+                    </button>
+                  </span>
+                </li>
+              );
             })}
           </ol>
         ) : (
           <p className="subtle">Select 3-8 room members to start.</p>
         )}
         <div className="available-player-list">
-          <h2>Available in Room</h2>
+          <h2>Add Players</h2>
           {availableHandles.length ? (
-            <ul className="seat-list">
+            <ul className="seat-list available-seat-list">
               {availableHandles.map((handle) => {
                 const online = isHandleOnline(handle.handle, context, presence, now);
                 return (
                   <li key={handle.normalizedHandle} data-testid={`available-${handle.handle}`} data-presence={online ? "online" : "offline"}>
-                    <span className="seat-primary">{handle.displayName}</span>
-                    <span className="seat-meta">
-                      <span className={`presence ${online ? "online" : "offline"}`}>{online ? "Online" : "Offline"}</span>
+                    <span className="seat-body">
+                      <span className="seat-primary">{handle.displayName}</span>
+                      <span className="seat-meta">
+                        <span className={`presence ${online ? "online" : "offline"}`}>{online ? "Online" : "Offline"}</span>
+                      </span>
                     </span>
-                    <button type="button" className="button secondary" onClick={() => void selectPlayer(handle.handle, true)} data-testid={`include-player-${handle.handle}`}>
-                      Include
+                    <button type="button" className="button icon-button seat-action" aria-label={`Add ${handle.displayName} to game`} onClick={() => void selectPlayer(handle.handle, true)} data-testid={`include-player-${handle.handle}`}>
+                      <UserPlus size={16} aria-hidden="true" />
                     </button>
                   </li>
                 );

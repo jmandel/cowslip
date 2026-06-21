@@ -12,11 +12,12 @@ import {
   commandJoinGame,
   commandMoveSeat,
   commandPauseGame,
+  commandReorderSeats,
+  commandScuttleGame,
   commandSubmitLetters,
   commandSubmitAnswer,
   commandRandomizeSeats,
   commandResumeGame,
-  commandSetReady,
   commandPassRound,
   commandStartGame,
   commandTransferHost,
@@ -63,8 +64,6 @@ function startThreePlayerGame(): RoomState {
   state = applyRemembered(state, commandCreateGame(state, "Alice"));
   state = applyRemembered(state, commandJoinGame(state, "Bob"));
   state = applyRemembered(state, commandJoinGame(state, "Cora"));
-  state = applyRemembered(state, commandSetReady(state, "Bob", true));
-  state = applyRemembered(state, commandSetReady(state, "Cora", true));
   state = applyRemembered(state, commandStartGame(state, "Alice"));
   return state;
 }
@@ -77,7 +76,6 @@ function startGameWithHandles(handles: string[]): RoomState {
   state = applyRemembered(state, commandCreateGame(state, handles[0]!));
   for (const handle of handles.slice(1)) {
     state = applyRemembered(state, commandJoinGame(state, handle));
-    state = applyRemembered(state, commandSetReady(state, handle, true));
   }
   return applyRemembered(state, commandStartGame(state, handles[0]!));
 }
@@ -200,7 +198,7 @@ describe("room command model", () => {
     expect(commandSubmitAnswer(state, "Bob", "Barn").ok).toBe(false);
   });
 
-  test("host can reorder lobby seats before start and roles follow the new order", () => {
+  test("room members can reorder lobby seats before start and roles follow the new order", () => {
     let state = reduceEvents("seat-room", []);
     for (const handle of ["Alice", "Bob", "Cora"]) {
       state = applyRemembered(state, commandClaimHandle(state, handle));
@@ -208,24 +206,21 @@ describe("room command model", () => {
     state = applyRemembered(state, commandCreateGame(state, "Alice"));
     state = applyRemembered(state, commandJoinGame(state, "Bob"));
     state = applyRemembered(state, commandJoinGame(state, "Cora"));
-    state = applyRemembered(state, commandSetReady(state, "Bob", true));
-    state = applyRemembered(state, commandSetReady(state, "Cora", true));
 
-    expect(commandMoveSeat(state, "Bob", "Cora", "up").ok).toBe(false);
-    state = applyRemembered(state, commandMoveSeat(state, "Alice", "Cora", "up"));
-    state = applyRemembered(state, commandMoveSeat(state, "Alice", "Cora", "up"));
+    state = applyRemembered(state, commandMoveSeat(state, "Bob", "Cora", "up"));
+    state = applyRemembered(state, commandMoveSeat(state, "Bob", "Cora", "up"));
 
     let game = activeGame(state)!;
     expect(game.players.map((player) => player.handle)).toEqual(["Cora", "Alice", "Bob"]);
     expect(game.players.find((player) => player.handle === "Alice")?.isHost).toBe(true);
 
-    state = applyRemembered(state, commandStartGame(state, "Alice"));
+    state = applyRemembered(state, commandStartGame(state, "Bob"));
     game = activeGame(state)!;
     expect(currentRound(game)?.guesserHandle).toBe("Cora");
     expect(currentRound(game)?.answerWriterHandle).toBe("Alice");
   });
 
-  test("host can randomize lobby seats without changing membership", () => {
+  test("room members can randomize lobby seats without changing membership", () => {
     let state = reduceEvents("random-seat-room", []);
     for (const handle of ["Alice", "Bob", "Cora", "Drew"]) {
       state = applyRemembered(state, commandClaimHandle(state, handle));
@@ -233,17 +228,49 @@ describe("room command model", () => {
     state = applyRemembered(state, commandCreateGame(state, "Alice"));
     for (const handle of ["Bob", "Cora", "Drew"]) {
       state = applyRemembered(state, commandJoinGame(state, handle));
-      state = applyRemembered(state, commandSetReady(state, handle, true));
     }
 
-    expect(commandRandomizeSeats(state, "Bob").ok).toBe(false);
-    state = applyRemembered(state, commandRandomizeSeats(state, "Alice"));
+    state = applyRemembered(state, commandRandomizeSeats(state, "Bob"));
     const game = activeGame(state)!;
     expect(new Set(game.players.map((player) => player.handle))).toEqual(new Set(["Alice", "Bob", "Cora", "Drew"]));
     expect(game.players.find((player) => player.handle === "Alice")?.isHost).toBe(true);
 
     state = applyRemembered(state, commandStartGame(state, "Alice"));
     expect(commandRandomizeSeats(state, "Alice").ok).toBe(false);
+  });
+
+  test("any room member can choose a selected subset and start it", () => {
+    let state = reduceEvents("subset-room", []);
+    for (const handle of ["Alice", "Bob", "Cora", "Drew"]) {
+      state = applyRemembered(state, commandClaimHandle(state, handle));
+    }
+    state = applyRemembered(state, commandCreateGame(state, "Alice"));
+    for (const handle of ["Bob", "Cora", "Drew"]) {
+      state = applyRemembered(state, commandJoinGame(state, handle));
+    }
+
+    state = applyRemembered(state, commandReorderSeats(state, "Drew", ["Alice", "Cora", "Drew"]));
+    expect(activeGame(state)?.players.map((player) => player.handle)).toEqual(["Alice", "Cora", "Drew"]);
+    state = applyRemembered(state, commandStartGame(state, "Bob"));
+
+    const game = activeGame(state)!;
+    expect(game.status).toBe("active");
+    expect(game.players.map((player) => player.handle)).toEqual(["Alice", "Cora", "Drew"]);
+    expect(currentRound(game)?.guesserHandle).toBe("Alice");
+  });
+
+  test("any room member can scuttle the current game and create a fresh lobby", () => {
+    let state = startThreePlayerGame();
+    const firstGameId = activeGame(state)!.id;
+
+    state = applyRemembered(state, commandScuttleGame(state, "Bob"));
+    expect(activeGame(state)?.status).toBe("void");
+
+    state = applyRemembered(state, commandCreateGame(state, "Cora"));
+    const game = activeGame(state)!;
+    expect(game.id).not.toBe(firstGameId);
+    expect(game.status).toBe("lobby");
+    expect(game.players.map((player) => player.handle)).toEqual(["Cora"]);
   });
 
   test("prevents non-holder letter entry and reveals atomically after all rows are submitted", () => {

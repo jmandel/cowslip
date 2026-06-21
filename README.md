@@ -12,7 +12,7 @@ https://joshuamandel.com/cowslip/
 
 - **No accounts.** A room link plus a handle is the whole identity model.
 - **Room-scoped play.** Add `?room=anything` to join or resume a room.
-- **Fast lobby flow.** Entering a room with a handle creates or joins the lobby automatically.
+- **Fast lobby flow.** Entering a room with a handle makes that person available for the next game.
 - **Shared history.** Completed games stay reviewable inside the room.
 - **Synchronous teamwork.** Players coordinate on a call or around a table while the app handles roles, rows, scoring, presence, and replay.
 - **Static deployment.** The app builds to static files and deploys on GitHub Pages.
@@ -21,7 +21,7 @@ https://joshuamandel.com/cowslip/
 
 1. Share a room link.
 2. Each player enters a handle. Reusing the same handle in the same room resumes that player.
-3. The lobby host starts once 3-8 players are ready.
+3. Pick 3-8 room members for the next game; anyone in the room can start.
 4. The guesser chooses a category.
 5. The answer writer enters the secret answer.
 6. Each clue giver adds one letter to each row they hold, or skips to add a blank.

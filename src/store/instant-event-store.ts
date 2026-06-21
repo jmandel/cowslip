@@ -1,4 +1,4 @@
-import { id, init, lookup } from "@instantdb/core";
+import { id, init } from "@instantdb/core";
 import schema from "../../instant.schema";
 import type { GameEvent, RoomPresence } from "../game/types";
 import type { EventStore } from "./event-store";
@@ -116,7 +116,7 @@ export class InstantEventStore implements EventStore {
       createdAt: lastEventAt,
     };
     if (activeGameId !== undefined) summaryUpdate.activeGameId = activeGameId;
-    const summaryTx = this.db.tx.roomSummaries[lookup("roomSlug", roomSlug)];
+    const summaryTx = this.db.tx.roomSummaries[await stableId(`room-summary:${roomSlug}`)];
     if (!summaryTx) return;
     try {
       await this.db.transact(summaryTx.update(summaryUpdate));
@@ -128,7 +128,7 @@ export class InstantEventStore implements EventStore {
   async markSeen(input: { roomSlug: string; handle: string; normalizedHandle: string; displayName: string }): Promise<void> {
     const now = Date.now();
     const presenceKey = `${input.roomSlug}:${input.normalizedHandle}`;
-    const presenceTx = this.db.tx.roomPresence[lookup("presenceKey", presenceKey)];
+    const presenceTx = this.db.tx.roomPresence[await stableId(`room-presence:${presenceKey}`)];
     if (!presenceTx) throw new Error("Could not create roomPresence transaction.");
     try {
       await this.db.transact(
@@ -147,6 +147,14 @@ export class InstantEventStore implements EventStore {
       console.warn("Could not update room presence.", error);
     }
   }
+}
+
+async function stableId(value: string): Promise<string> {
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-1", new TextEncoder().encode(value)));
+  digest[6] = (digest[6]! & 0x0f) | 0x50;
+  digest[8] = (digest[8]! & 0x3f) | 0x80;
+  const hex = Array.from(digest.slice(0, 16), (byte) => byte.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
 }
 
 function activeGameIdFromEvents(events: GameEvent[]): string | undefined {

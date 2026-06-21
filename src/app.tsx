@@ -3,7 +3,7 @@ import { createRoot } from "react-dom/client";
 import { Check, CircleHelp, Copy, Home, LogOut, UserPen, X } from "lucide-react";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
-import { STARTER_CATEGORIES, categoryLabel } from "./content/categories";
+import { categoryLabel } from "./content/categories";
 import {
   activeGame,
   commandJudgeGuess,
@@ -13,19 +13,20 @@ import {
   commandClaimHandle,
   commandCreateGame,
   commandGuess,
-  commandJoinGame,
   commandMoveSeat,
   commandPauseGame,
+  commandReorderSeats,
+  commandScuttleGame,
   commandSubmitLetters,
   commandSubmitAnswer,
   commandRandomizeSeats,
   commandResumeGame,
-  commandSetReady,
   commandPassRound,
   commandStartGame,
   commandTransferHost,
   commandTryRevealLetters,
   commandVoidRound,
+  cleanHandle,
   commandRequestMoreLetters,
   currentRound,
   finalScore,
@@ -80,6 +81,7 @@ type GameState = {
   pendingGuess: string;
   pendingPassConfirm: boolean;
   pendingVoidConfirm: boolean;
+  pendingScuttleConfirm: boolean;
   focusTarget: string | undefined;
   helpOpen: boolean;
   now: number;
@@ -90,15 +92,15 @@ type GameState = {
   navigate(next: AppContext): void;
   setUrl(params: Record<string, string | undefined>): void;
   copyRoom(): Promise<void>;
-  openRoom(roomSlug: string): void;
+  openRoom(roomSlug: string, handle?: string): void;
   backHome(): void;
   forgetRoom(roomSlug: string): void;
   claimHandle(handle: string): Promise<void>;
   switchHandle(): void;
   createGame(): Promise<void>;
-  joinGame(): Promise<void>;
-  toggleReady(): Promise<void>;
+  selectPlayer(handle: string, selected: boolean): Promise<void>;
   startGame(): Promise<void>;
+  scuttleGame(confirmed?: boolean): Promise<void>;
   moveSeat(handle: string, direction: "up" | "down"): Promise<void>;
   randomizeSeats(): Promise<void>;
   pauseGame(): Promise<void>;
@@ -124,7 +126,6 @@ type GameState = {
   ensureHandleClaimed(): Promise<void>;
   ensureHandleSeen(force?: boolean): Promise<void>;
   ensureLobbyReady(): Promise<void>;
-  ensureLobbyJoined(): Promise<void>;
   ensureLettersRevealed(): Promise<void>;
 };
 
@@ -165,6 +166,7 @@ const useGameStore = create<GameState>()(persist((set, get) => {
   pendingGuess: "",
   pendingPassConfirm: false,
   pendingVoidConfirm: false,
+  pendingScuttleConfirm: false,
   focusTarget: undefined,
   helpOpen: false,
   now: Date.now(),
@@ -198,7 +200,7 @@ const useGameStore = create<GameState>()(persist((set, get) => {
     runtime.unsubscribePresence = undefined;
     if (runtime.seenInterval) window.clearInterval(runtime.seenInterval);
     runtime.seenInterval = undefined;
-    set({ context: next, roomState: undefined, presence: [], error: "", pendingGuess: "", pendingPassConfirm: false, pendingVoidConfirm: false, now: Date.now() });
+    set({ context: next, roomState: undefined, presence: [], error: "", pendingGuess: "", pendingPassConfirm: false, pendingVoidConfirm: false, pendingScuttleConfirm: false, now: Date.now() });
 
     if (!next.roomSlug) return;
     get().rememberRoom(next.roomSlug, next.handle);
@@ -208,7 +210,6 @@ const useGameStore = create<GameState>()(persist((set, get) => {
       void get().ensureHandleClaimed();
       void get().ensureHandleSeen();
       void get().ensureLobbyReady();
-      void get().ensureLobbyJoined();
       void get().ensureLettersRevealed();
     });
     runtime.unsubscribePresence = runtime.eventStore.subscribePresence(next.roomSlug, (presence) => {
@@ -250,7 +251,12 @@ const useGameStore = create<GameState>()(persist((set, get) => {
     }
   },
 
-  openRoom(roomSlug) {
+  openRoom(roomSlug, handleInput = "") {
+    const cleanedHandle = cleanHandle(handleInput);
+    if (cleanedHandle) {
+      get().rememberRoom(roomSlug, cleanedHandle);
+      set({ lastHandle: cleanedHandle });
+    }
     get().setUrl({ room: roomSlug, handle: undefined, review: undefined });
   },
 
@@ -284,21 +290,38 @@ const useGameStore = create<GameState>()(persist((set, get) => {
     await dispatchOnce("create-game", () => commandCreateGame(requiredRoomState(get), get().context.handle), set, get);
   },
 
-  async joinGame() {
-    await dispatchOnce("join-game", () => commandJoinGame(requiredRoomState(get), get().context.handle), set, get);
-  },
-
-  async toggleReady() {
-    await dispatchOnce("toggle-ready", () => {
+  async selectPlayer(playerHandle, selected) {
+    await dispatchOnce(`select-player:${normalizeHandle(playerHandle)}:${selected}`, () => {
       const state = requiredRoomState(get);
       const game = activeGame(state);
-      const me = game?.players.find((player) => player.normalizedHandle === normalizeHandle(get().context.handle));
-      return commandSetReady(state, get().context.handle, !me?.ready);
+      if (!game || game.status !== "lobby") return { ok: false, error: "Seats can only be changed in the lobby." };
+      const normalizedHandle = normalizeHandle(playerHandle);
+      const currentHandles = [...game.players].sort((a, b) => a.seatNumber - b.seatNumber).map((player) => player.handle);
+      if (!selected) {
+        return commandReorderSeats(
+          state,
+          get().context.handle,
+          currentHandles.filter((handle) => normalizeHandle(handle) !== normalizedHandle),
+        );
+      }
+      const roomHandle = state.handles.find((handle) => handle.normalizedHandle === normalizedHandle);
+      if (!roomHandle) return { ok: false, error: "Only room members can be selected." };
+      if (currentHandles.some((handle) => normalizeHandle(handle) === normalizedHandle)) return { ok: true, events: [] };
+      return commandReorderSeats(state, get().context.handle, [...currentHandles, roomHandle.handle]);
     }, set, get);
   },
 
   async startGame() {
     await dispatchOnce("start-game", () => commandStartGame(requiredRoomState(get), get().context.handle), set, get);
+  },
+
+  async scuttleGame(confirmed = false) {
+    if (!confirmed) {
+      set({ pendingScuttleConfirm: true, focusTarget: "confirm-scuttle-game" });
+      return;
+    }
+    set({ pendingScuttleConfirm: false });
+    await dispatchOnce("scuttle-game", () => commandScuttleGame(requiredRoomState(get), get().context.handle), set, get);
   },
 
   async moveSeat(handle, direction) {
@@ -465,7 +488,8 @@ const useGameStore = create<GameState>()(persist((set, get) => {
     if (!roomState || !context.handle) return;
     const normalizedHandle = normalizeHandle(context.handle);
     if (!roomState.handles.some((handle) => handle.normalizedHandle === normalizedHandle)) return;
-    if (activeGame(roomState)) return;
+    const game = activeGame(roomState);
+    if (game && game.status !== "void") return;
     const runtime = get().runtime;
     const key = `${context.roomSlug}:${normalizedHandle}:create-lobby`;
     if (runtime.pendingLobbyJoins.has(key)) return;
@@ -474,29 +498,6 @@ const useGameStore = create<GameState>()(persist((set, get) => {
       set({ error: result.error });
       return;
     }
-    runtime.pendingLobbyJoins.add(key);
-    try {
-      await runtime.eventStore.append(result.events);
-    } finally {
-      runtime.pendingLobbyJoins.delete(key);
-    }
-  },
-
-  async ensureLobbyJoined() {
-    const { context, roomState } = get();
-    if (!roomState || !context.handle) return;
-    const runtime = get().runtime;
-    const game = activeGame(roomState);
-    if (!game || game.status !== "lobby") return;
-    if (playerForGame(game, context.handle)) return;
-    const key = `${game.id}:${normalizeHandle(context.handle)}`;
-    if (runtime.pendingLobbyJoins.has(key)) return;
-    const result = commandJoinGame(roomState, context.handle);
-    if (!result.ok) {
-      set({ error: result.error });
-      return;
-    }
-    if (!result.events.length) return;
     runtime.pendingLobbyJoins.add(key);
     try {
       await runtime.eventStore.append(result.events);
@@ -607,6 +608,11 @@ function Shell(): React.ReactElement {
         </a>
       </div>
       <div className="topbar-global-actions">
+        {context.roomSlug ? (
+          <button type="button" className="button icon-button topbar-icon-button" aria-label="Back to home" title="Back to home" onClick={backHome} data-testid="back-home">
+            <Home aria-hidden="true" size={19} strokeWidth={2.5} />
+          </button>
+        ) : null}
         <button type="button" className="help-button" aria-label="How to play" title="How to play" onClick={openHelp} data-testid="help-button">
           <CircleHelp aria-hidden="true" size={24} strokeWidth={2.25} />
         </button>
@@ -620,11 +626,6 @@ function Shell(): React.ReactElement {
               </div>
             ) : null}
             <div className="topbar-icon-actions">
-              {context.roomSlug ? (
-                <button type="button" className="button icon-button topbar-icon-button" aria-label="Back to home" title="Back to home" onClick={backHome} data-testid="back-home">
-                  <Home aria-hidden="true" size={19} strokeWidth={2.5} />
-                </button>
-              ) : null}
               {context.roomSlug ? (
                 <button
                   type="button"
@@ -734,10 +735,12 @@ function HelpDialog(): React.ReactElement {
 }
 
 function RoomEntry(): React.ReactElement {
-  const setUrl = useGameStore((state) => state.setUrl);
   const openRoom = useGameStore((state) => state.openRoom);
   const forgetRoom = useGameStore((state) => state.forgetRoom);
   const rememberedRooms = useGameStore((state) => state.rememberedRooms);
+  const lastHandle = useGameStore((state) => state.lastHandle);
+  const handleInputRef = useRef<HTMLInputElement>(null);
+  const defaultHandle = lastHandle || rememberedRooms.find((room) => room.handle)?.handle || "";
   return (
     <section className="hero">
       <div className="plain-lockup">
@@ -751,13 +754,29 @@ function RoomEntry(): React.ReactElement {
           onSubmit={(event) => {
             event.preventDefault();
             const roomSlug = roomSlugFrom(formValue(event.currentTarget, "room"));
-            if (roomSlug) setUrl({ room: roomSlug, review: undefined });
+            const handle = cleanHandle(formValue(event.currentTarget, "handle"));
+            if (roomSlug && handle) openRoom(roomSlug, handle);
           }}
         >
           <h2 className="card-title">Room</h2>
           <label className="form-control">
             <span className="sr-only">Room</span>
-            <input name="room" autoComplete="off" placeholder="room-name" required data-testid="room-input" />
+            <input
+              name="room"
+              autoComplete="off"
+              placeholder="room-name"
+              required
+              data-testid="room-input"
+              onKeyDown={(event) => {
+                if (event.key !== "Enter" || formValue(event.currentTarget.form!, "handle")) return;
+                event.preventDefault();
+                handleInputRef.current?.focus();
+              }}
+            />
+          </label>
+          <label className="form-control">
+            <span>Name</span>
+            <input ref={handleInputRef} name="handle" autoComplete="nickname" maxLength={32} placeholder="Alice" required defaultValue={defaultHandle} data-testid="handle-input" />
           </label>
           <div className="action-row">
             <button type="submit" className="button primary" data-testid="enter-room">
@@ -790,6 +809,7 @@ function RoomEntry(): React.ReactElement {
 
 function HandleClaim(): React.ReactElement {
   const claimHandle = useGameStore((state) => state.claimHandle);
+  const lastHandle = useGameStore((state) => state.lastHandle);
   return (
     <section className="handle-page">
       <div className="paper-panel handle-panel">
@@ -802,10 +822,10 @@ function HandleClaim(): React.ReactElement {
         >
           <label>
             Name
-            <input name="handle" autoComplete="nickname" maxLength={32} placeholder="Alice" required data-testid="handle-input" />
+            <input name="handle" autoComplete="nickname" maxLength={32} placeholder="Alice" required defaultValue={lastHandle} data-testid="handle-input" />
           </label>
           <button type="submit" className="button primary" data-testid="claim-handle">
-            Join Room
+            Enter Room
           </button>
         </form>
       </div>
@@ -867,94 +887,105 @@ function Lobby({ game }: { game: Game }): React.ReactElement {
   const roomState = useGameStore((state) => state.roomState);
   const presence = useGameStore((state) => state.presence);
   const now = useGameStore((state) => state.now);
-  const joinGame = useGameStore((state) => state.joinGame);
-  const toggleReady = useGameStore((state) => state.toggleReady);
+  const selectPlayer = useGameStore((state) => state.selectPlayer);
   const startGame = useGameStore((state) => state.startGame);
-  const claimHost = useGameStore((state) => state.claimHost);
+  const scuttleGame = useGameStore((state) => state.scuttleGame);
+  const pendingScuttleConfirm = useGameStore((state) => state.pendingScuttleConfirm);
   const randomizeSeats = useGameStore((state) => state.randomizeSeats);
   const moveSeat = useGameStore((state) => state.moveSeat);
-  const transferHost = useGameStore((state) => state.transferHost);
-  const me = game.players.find((player) => player.normalizedHandle === normalizeHandle(context.handle));
-  const isHost = normalizeHandle(game.hostHandle) === normalizeHandle(context.handle);
-  const readyCount = game.players.filter((player) => player.ready).length;
-  const canStart = readyCount >= 3 && readyCount <= 8;
+  const selectedPlayers = [...game.players].sort((a, b) => a.seatNumber - b.seatNumber);
+  const selectedHandles = new Set(selectedPlayers.map((player) => player.normalizedHandle));
+  const availableHandles = [...(roomState?.handles ?? [])]
+    .filter((handle) => !selectedHandles.has(handle.normalizedHandle))
+    .sort((a, b) => a.createdAt - b.createdAt || a.displayName.localeCompare(b.displayName));
+  const selectedCount = selectedPlayers.length;
+  const canStart = selectedCount >= 3 && selectedCount <= 8;
   const rolePreview = canStart ? lobbyRolePreview(game) : "";
 
   return (
     <section className="room-grid">
-      <div className="paper-panel">
+      <div className="paper-panel lobby-summary">
         <p className="eyebrow">Game Lobby</p>
         <h1>{context.roomSlug}</h1>
-        <p className="subtle">{readyCount} ready. Start needs 3-8 ready players.</p>
+        <p className="subtle">{selectedCount} selected. Start needs 3-8 players.</p>
         {rolePreview ? <p className="role-preview" data-testid="role-preview">{rolePreview}</p> : null}
-        <div className="rules-summary" data-testid="rules-summary">
-          <p>
-            <strong>Category pack:</strong> Starter Categories ({STARTER_CATEGORIES.length})
-          </p>
-          <p>
-            <strong>Rules:</strong> 3-8 players, five cells max, points 20/10/7/5/3, final score uses the best five rounds.
-          </p>
-        </div>
         <div className="action-row">
-          {me ? (
-            <button type="button" className={`button ${me.ready ? "secondary" : "primary"}`} onClick={() => void toggleReady()} data-testid="toggle-ready">
-              {me.ready ? "Not Ready" : "Ready"}
-            </button>
-          ) : (
-            <button type="button" className="button primary" onClick={() => void joinGame()} data-testid="join-game">
-              Join Game
-            </button>
-          )}
-          {isHost ? (
-            <button type="button" className="button primary" onClick={() => void startGame()} data-testid="start-game" disabled={!canStart} aria-disabled={!canStart}>
-              Start Game
-            </button>
-          ) : null}
-          {!isHost && me && !isHandleOnline(game.hostHandle, context, presence, now) ? (
-            <button type="button" className="button secondary" onClick={() => void claimHost()} data-testid="claim-host">
-              Take Host
+          <button type="button" className="button primary" onClick={() => void startGame()} data-testid="start-game" disabled={!canStart} aria-disabled={!canStart}>
+            Start Game
+          </button>
+          <button
+            type="button"
+            className="button danger"
+            onClick={() => void scuttleGame(pendingScuttleConfirm)}
+            data-testid={pendingScuttleConfirm ? "confirm-scuttle-game" : "scuttle-game"}
+          >
+            {pendingScuttleConfirm ? "Confirm Scuttle" : "Scuttle Game"}
+          </button>
+        </div>
+        {pendingScuttleConfirm ? <p className="hint">This cancels the current lobby and opens a fresh one.</p> : null}
+      </div>
+      <div className="paper-panel player-selection-panel">
+        <div className="section-heading-row">
+          <h2>Selected Players</h2>
+          {selectedCount > 1 ? (
+            <button type="button" className="button secondary lobby-randomize" onClick={() => void randomizeSeats()} data-testid="randomize-seats">
+              Randomize
             </button>
           ) : null}
         </div>
-      </div>
-      <div className="paper-panel">
-        <h2>Seats</h2>
-        <ol className="seat-list">
-          {[...game.players].sort((a, b) => a.seatNumber - b.seatNumber).map((player) => {
+        {selectedPlayers.length ? (
+          <ol className="seat-list">
+            {selectedPlayers.map((player) => {
             const online = isHandleOnline(player.handle, context, presence, now);
             return (
               <li key={player.handle} data-testid={`seat-${player.handle}`} data-presence={online ? "online" : "offline"}>
-                <span data-testid="seat-name">{player.displayName}</span>
-                <span>
-                  {player.isHost ? "Host" : ""} {player.ready ? "Ready" : "Waiting"}{" "}
+                <span className="seat-primary" data-testid="seat-name">{player.displayName}</span>
+                <span className="seat-meta">
                   <span className={`presence ${online ? "online" : "offline"}`} data-testid={`presence-${player.handle}`}>
                     {online ? "Online" : "Offline"}
                   </span>
                 </span>
-                {isHost ? (
-                  <span className="seat-actions">
-                    <button type="button" className="button icon-button" aria-label={`Move ${player.displayName} up`} onClick={() => void moveSeat(player.handle, "up")} data-testid={`seat-up-${player.handle}`}>
-                      ^
-                    </button>
-                    <button type="button" className="button icon-button" aria-label={`Move ${player.displayName} down`} onClick={() => void moveSeat(player.handle, "down")} data-testid={`seat-down-${player.handle}`}>
-                      v
-                    </button>
-                  </span>
-                ) : null}
-                {isHost && !player.isHost ? (
-                  <button type="button" className="button quiet" onClick={() => void transferHost(player.handle)} data-testid={`transfer-host-${player.handle}`}>
-                    Make Host
+                <span className="seat-actions">
+                  <button type="button" className="button icon-button" aria-label={`Move ${player.displayName} up`} onClick={() => void moveSeat(player.handle, "up")} data-testid={`seat-up-${player.handle}`}>
+                    ^
                   </button>
-                ) : null}
+                  <button type="button" className="button icon-button" aria-label={`Move ${player.displayName} down`} onClick={() => void moveSeat(player.handle, "down")} data-testid={`seat-down-${player.handle}`}>
+                    v
+                  </button>
+                  <button type="button" className="button icon-button" aria-label={`Remove ${player.displayName}`} onClick={() => void selectPlayer(player.handle, false)} data-testid={`exclude-player-${player.handle}`}>
+                    <X size={16} aria-hidden="true" />
+                  </button>
+                </span>
               </li>
             );
-          })}
-        </ol>
-        {isHost ? (
-          <button type="button" className="button secondary lobby-randomize" onClick={() => void randomizeSeats()} data-testid="randomize-seats">
-            Randomize Seats
-          </button>
-        ) : null}
+            })}
+          </ol>
+        ) : (
+          <p className="subtle">Select 3-8 room members to start.</p>
+        )}
+        <div className="available-player-list">
+          <h2>Available in Room</h2>
+          {availableHandles.length ? (
+            <ul className="seat-list">
+              {availableHandles.map((handle) => {
+                const online = isHandleOnline(handle.handle, context, presence, now);
+                return (
+                  <li key={handle.normalizedHandle} data-testid={`available-${handle.handle}`} data-presence={online ? "online" : "offline"}>
+                    <span className="seat-primary">{handle.displayName}</span>
+                    <span className="seat-meta">
+                      <span className={`presence ${online ? "online" : "offline"}`}>{online ? "Online" : "Offline"}</span>
+                    </span>
+                    <button type="button" className="button secondary" onClick={() => void selectPlayer(handle.handle, true)} data-testid={`include-player-${handle.handle}`}>
+                      Include
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          ) : (
+            <p className="subtle">Everyone in the room is selected.</p>
+          )}
+        </div>
       </div>
       <History />
     </section>
@@ -965,39 +996,82 @@ function StatusRail({ game, round, role }: { game: Game; round: Round; role: str
   const context = useGameStore((state) => state.context);
   const score = game.roundPoints.reduce((sum, value) => sum + value, 0);
   const currentPoints = pointsForDepth(true, round.depth);
+  const ladder = [20, 10, 7, 5, 3];
   return (
     <aside className="status-rail">
       <div className="paper-panel status-card">
-        <div className="status-card-header">
-          <p className="eyebrow">Round {round.roundNumber} of {game.totalRounds}</p>
-        </div>
-        <div className="status-card-body">
-          <div className="role-summary">
-            <h2>{roleLabel(role)}</h2>
-            <p>{context.handle}</p>
+        <p className="eyebrow">Status</p>
+        <div className="status-list">
+          <div className="status-row">
+            <span className="status-label">Round</span>
+            <strong className="status-value">{round.roundNumber} of {game.totalRounds}</strong>
           </div>
-          <div className="score-inline">
-            <span>Points</span>
+          <div className="status-row">
+            <span className="status-label">Role</span>
+            <span className="status-value">
+              <strong>{roleLabel(role)}</strong>
+            </span>
+          </div>
+        </div>
+        <div className="status-section">
+          <span className="status-label">Earned</span>
+          <div className="earned-score-row">
+            {game.roundPoints.length ? (
+              game.roundPoints.map((value, index) => (
+                <span key={`${index}:${value}`} className={`token token-${value} earned-token`}>
+                  {value}
+                </span>
+              ))
+            ) : (
+              <span className="subtle">No points yet</span>
+            )}
+          </div>
+        </div>
+        {game.roundPoints.length > 1 ? (
+          <div className="status-total">
+            <span>Total</span>
             <strong>{score}</strong>
           </div>
+        ) : null}
+        <div className="status-section" aria-label="Point ladder">
+          <span className="status-label">Point Ladder</span>
+          <div className="token-stack">
+            {ladder.map((value) => (
+              <span key={value} className={`token token-${value} ${value === currentPoints ? "current" : ""}`}>
+                {value}
+              </span>
+            ))}
+          </div>
         </div>
       </div>
-      <div className="paper-panel points-ladder" aria-label="Point ladder">
-        <div className="points-ladder-heading">
-          <span>Point Ladder</span>
-          <strong>Current {currentPoints}</strong>
-        </div>
-        <div className="token-stack">
-          {[20, 10, 7, 5, 3].map((value) => (
-            <span key={value} className={`token token-${value}`}>
-              {value}
-            </span>
-          ))}
-        </div>
-      </div>
+      <PlayerKeyPanel game={game} />
       <HostControls game={game} />
       <HostRecoveryControls game={game} />
+      <RoomResetControls game={game} />
     </aside>
+  );
+}
+
+function RoomResetControls({ game }: { game: Game }): React.ReactElement | null {
+  const context = useGameStore((state) => state.context);
+  const scuttleGame = useGameStore((state) => state.scuttleGame);
+  const pendingScuttleConfirm = useGameStore((state) => state.pendingScuttleConfirm);
+  if (!context.handle || game.status === "complete" || game.status === "void") return null;
+  return (
+    <details className="paper-panel host-controls" data-testid="room-options">
+      <summary>Room Options</summary>
+      <div className="host-controls-body">
+        <button
+          type="button"
+          className="button danger"
+          onClick={() => void scuttleGame(pendingScuttleConfirm)}
+          data-testid={pendingScuttleConfirm ? "confirm-scuttle-game" : "scuttle-game"}
+        >
+          {pendingScuttleConfirm ? "Confirm Scuttle" : "Scuttle Game"}
+        </button>
+        {pendingScuttleConfirm ? <p className="hint">This cancels this game and opens a fresh lobby.</p> : null}
+      </div>
+    </details>
   );
 }
 
@@ -1355,7 +1429,6 @@ function RoundRecap({ game, round }: { game: Game; round: Round }): React.ReactE
         Final score so far: {finalScore(game)} / 100
       </p>
       <Rows game={game} round={round} revealAll={true} />
-      <PlayerLegend game={game} />
       {isHost ? (
         <button type="button" className="button primary" onClick={() => void advanceRound()} data-testid="advance">
           {round.roundNumber >= game.totalRounds ? "Final Score" : "Next Round"}
@@ -1474,9 +1547,6 @@ function Rows({
   showLetterEntryState?: boolean;
 }): React.ReactElement {
   const context = useGameStore((state) => state.context);
-  const roomState = useGameStore((state) => state.roomState);
-  const presence = useGameStore((state) => state.presence);
-  const now = useGameStore((state) => state.now);
   const viewer = viewerHandle || context.handle;
   const editableRowIndexes = new Set(editableRows.map((row) => row.rowIndex));
   return (
@@ -1487,7 +1557,7 @@ function Rows({
         const isComplete = rowIsComplete(round, row.rowIndex);
         const hasCurrentEntry = round.entries.some((entry) => entry.rowIndex === row.rowIndex && entry.depth === round.depth);
         const showPendingCell = !revealAll && !isComplete && !hasCurrentEntry && round.phase === "letter-entry";
-        const rowState = letterEntryRowState(round, row, viewer, presence, now);
+        const rowPen = penForHandle(game, row.currentHolderHandle);
         const trailingBlankDepths = new Set(
           editable && showPendingCell ? trailingBlankEntriesForRow(round, row.rowIndex).map((entry) => entry.depth) : [],
         );
@@ -1507,8 +1577,6 @@ function Rows({
           <div
             className={`hint-row ${revealAll ? "reveal" : ""} ${isComplete ? "complete" : ""}`}
             key={row.rowIndex}
-            data-state={rowState.state}
-            data-presence={rowState.presence}
           >
             <div className="row-main">
               <div className="slots" aria-label={`Row ${row.rowIndex + 1}`} data-cell-count={cellCount}>
@@ -1521,14 +1589,15 @@ function Rows({
                     (!revealAll && !entry.revealed && !sameHandle(entry.handle, viewer));
                   if (showPendingCell && trailingBlankDepths.has(entry.depth)) {
                     return (
-                      <span className="slot editing blank-fill" key={entry.depth} data-testid={`clue-cell-${row.rowIndex}-${entry.depth}`}>
+                      <span className={`slot editing blank-fill pen-${rowPen.index}`} key={entry.depth} data-testid={`clue-cell-${row.rowIndex}-${entry.depth}`}>
                         <ClueCellInputControl rowIndex={row.rowIndex} depth={entry.depth} />
                       </span>
                     );
                   }
+                  const wasFilledLater = !entry.skipped && filledAtDepth > entry.depth;
                   return (
                     <span
-                      className={`slot filled frozen ${displayAsBlank ? "skipped" : ""} pen-${pen.index}`}
+                      className={`slot filled frozen ${displayAsBlank ? "skipped" : ""} ${wasFilledLater ? "late-fill" : ""} pen-${pen.index}`}
                       key={entry.depth}
                       data-testid={`clue-cell-${row.rowIndex}-${entry.depth}`}
                       data-author={entry.handle}
@@ -1538,23 +1607,22 @@ function Rows({
                   );
                 })}
                 {showPendingCell ? (
-                  <span className={`slot ${editable ? "editing" : "pending"}`} data-testid={`clue-cell-${row.rowIndex}-${round.depth}`}>
+                  <span className={`slot ${editable ? "editing" : "pending"} pen-${rowPen.index}`} data-testid={`clue-cell-${row.rowIndex}-${round.depth}`}>
                     {editable ? <ClueCellInputControl rowIndex={row.rowIndex} depth={round.depth} /> : <span className="clue-placeholder" aria-hidden="true" />}
                   </span>
                 ) : null}
               </div>
               {editable ? <RowEntryTools rowIndex={row.rowIndex} /> : null}
             </div>
-            {revealAll ? null : (
+            {!revealAll && showLetterEntryState ? (
               <span
-                className="holder row-state"
+                className="sr-only row-state"
                 data-testid={`row-state-${row.rowIndex}`}
-                data-state={rowState.state}
-                data-presence={rowState.presence}
+                data-state={letterEntryRowState(round, row, viewer).state}
               >
-                {showLetterEntryState ? rowState.label : row.currentHolderHandle}
+                {letterEntryRowState(round, row, viewer).label}
               </span>
-            )}
+            ) : null}
           </div>
         );
       })}
@@ -1566,21 +1634,16 @@ function letterEntryRowState(
   round: Round,
   row: Row,
   viewerHandle: string,
-  presence: RoomPresence[],
-  now: number,
-): { label: string; state: "complete" | "submitted" | "waiting" | "editable"; presence: "online" | "offline" } {
+): { label: string; state: "complete" | "submitted" | "waiting" | "editable" } {
   const entry = round.entries.find((item) => item.rowIndex === row.rowIndex && item.depth === round.depth);
   const complete = rowIsComplete(round, row.rowIndex);
-  const handle = entry?.handle ?? row.currentHolderHandle;
-  const online = isHandleOnline(handle, { roomSlug: "", handle: viewerHandle }, presence, now);
 
-  if (complete) return { label: "Complete", state: "complete", presence: online ? "online" : "offline" };
+  if (complete) return { label: "Complete", state: "complete" };
   if (!entry) {
-    if (sameHandle(row.currentHolderHandle, viewerHandle)) return { label: "You", state: "editable", presence: "online" };
-    return { label: `${row.currentHolderHandle} ${online ? "waiting" : "waiting (offline)"}`, state: "waiting", presence: online ? "online" : "offline" };
+    if (sameHandle(row.currentHolderHandle, viewerHandle)) return { label: "Your turn", state: "editable" };
+    return { label: "Waiting", state: "waiting" };
   }
-  if (sameHandle(entry.handle, viewerHandle)) return { label: "You submitted", state: "submitted", presence: "online" };
-  return { label: `${entry.handle} submitted`, state: "submitted", presence: online ? "online" : "offline" };
+  return { label: "Ready", state: "submitted" };
 }
 
 function ClueCellInputControl({ rowIndex, depth }: { rowIndex: number; depth: number }): React.ReactElement {
@@ -1695,20 +1758,43 @@ function ClueCellText({ entry, displayAsBlank }: { entry: ClueEntry; displayAsBl
   );
 }
 
-function PlayerLegend({ game }: { game: Game }): React.ReactElement {
+function PlayerKeyPanel({ game }: { game: Game }): React.ReactElement {
+  const context = useGameStore((state) => state.context);
+  const round = currentRound(game);
+  return (
+    <section className="paper-panel player-key-panel" data-testid="player-key">
+      <p className="eyebrow">Players</p>
+      {round ? <PlayerLegend game={game} round={round} viewerHandle={context.handle} /> : <PlayerLegend game={game} />}
+    </section>
+  );
+}
+
+function PlayerLegend({ game, round, viewerHandle = "" }: { game: Game; round?: Round; viewerHandle?: string }): React.ReactElement {
   return (
     <div className="player-legend" data-testid="player-legend" aria-label="Player pen styles">
       {game.players.map((player) => {
         const pen = penForHandle(game, player.handle);
+        const status = playerTurnStatus(round, player.handle, viewerHandle);
         return (
           <span key={player.handle} className="legend-item" style={penStyleVars(pen)}>
             <span className={`legend-sample pen-${pen.index}`} aria-hidden="true" />
-            <span>{player.displayName}</span>
+            <span className="legend-name">{player.displayName}</span>
+            {status ? <span className="legend-status">{status}</span> : null}
           </span>
         );
       })}
     </div>
   );
+}
+
+function playerTurnStatus(round: Round | undefined, handle: string, viewerHandle: string): string {
+  if (!round || round.phase !== "letter-entry") return "";
+  const normalizedHandle = normalizeHandle(handle);
+  const heldRows = round.rows.filter((row) => normalizeHandle(row.currentHolderHandle) === normalizedHandle);
+  if (!heldRows.length) return "";
+  const waiting = heldRows.some((row) => !round.entries.some((entry) => entry.rowIndex === row.rowIndex && entry.depth === round.depth));
+  if (waiting) return sameHandle(handle, viewerHandle) ? "Your turn" : "Waiting";
+  return "Ready";
 }
 
 function History(): React.ReactElement {
@@ -1892,7 +1978,7 @@ function readContextFromLocation(state: Pick<GameState, "rememberedRooms" | "las
   const roomSlug = roomSlugFrom(url.searchParams.get("room") ?? "");
   const handleFromUrl = url.searchParams.get("handle")?.trim() ?? "";
   const rememberedHandle = state.rememberedRooms.find((room) => room.roomSlug === roomSlug)?.handle ?? "";
-  const handle = handleFromUrl || rememberedHandle || state.lastHandle || "";
+  const handle = handleFromUrl || rememberedHandle || "";
   const reviewGameId = url.searchParams.get("review");
   return reviewGameId ? { roomSlug, handle, reviewGameId } : { roomSlug, handle };
 }
@@ -1918,7 +2004,7 @@ function roleLabel(role: string): string {
 }
 
 function lobbyRolePreview(game: Game): string {
-  const players = [...game.players].filter((player) => player.ready).sort((a, b) => a.seatNumber - b.seatNumber);
+  const players = [...game.players].sort((a, b) => a.seatNumber - b.seatNumber);
   if (players.length < 3) return "";
   const guesser = players[0];
   const answerWriter = players[1];
@@ -1974,7 +2060,7 @@ function focusPrimaryAction(): void {
     '[data-testid="room-input"]',
     '[data-testid="handle-input"]',
     '[data-testid="start-game"]:not(:disabled)',
-    '[data-testid="toggle-ready"]',
+    '[data-testid^="include-player-"]',
     '[data-testid="category-option"]',
     '[data-testid="answer-input"]',
     '[data-testid^="letter-input-"]',
@@ -2025,14 +2111,7 @@ function gameSummary(game: Game): string {
 }
 
 export function startApp(): void {
-  startCategoryCountGuard();
   const root = document.getElementById("app");
   if (!root) throw new Error("Missing element #app");
   createRoot(root).render(<CowslipApp />);
-}
-
-function startCategoryCountGuard(): void {
-  if (STARTER_CATEGORIES.length < 120) {
-    console.warn(`Starter category pack has ${STARTER_CATEGORIES.length} categories; launch target is 120-200.`);
-  }
 }

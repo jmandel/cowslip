@@ -58,6 +58,11 @@ export function playerForHandle(game: Game, handle: string): GamePlayer | undefi
   return game.players.find((player) => player.normalizedHandle === normalizedHandle);
 }
 
+function roomHandleFor(state: RoomState, handle: string): RoomHandle | undefined {
+  const normalizedHandle = normalizeHandle(handle);
+  return state.handles.find((roomHandle) => roomHandle.normalizedHandle === normalizedHandle);
+}
+
 export function roleForHandle(game: Game, handle: string): "guesser" | "answerWriter" | "clueGiver" | "none" {
   const round = currentRound(game);
   const normalizedHandle = normalizeHandle(handle);
@@ -208,21 +213,33 @@ function applyEvent(state: RoomState, event: GameEvent): void {
       if (game.status !== "lobby") return;
       const orderedHandles = arrayPayload<string>(event, "handles");
       const playersByHandle = new Map(game.players.map((player) => [player.normalizedHandle, player]));
+      const roomHandlesByHandle = new Map(state.handles.map((roomHandle) => [roomHandle.normalizedHandle, roomHandle]));
       const normalizedOrder = orderedHandles.map(normalizeHandle);
-      if (normalizedOrder.length !== game.players.length) return;
-      if (new Set(normalizedOrder).size !== game.players.length) return;
-      if (normalizedOrder.some((handle) => !playersByHandle.has(handle))) return;
+      if (normalizedOrder.length > 8) return;
+      if (new Set(normalizedOrder).size !== normalizedOrder.length) return;
+      if (normalizedOrder.some((handle) => !roomHandlesByHandle.has(handle))) return;
       game.players = normalizedOrder.map((normalizedHandle, seatNumber) => {
-        const player = playersByHandle.get(normalizedHandle)!;
-        return { ...player, seatNumber, updatedAt: event.createdAt };
+        const player = playersByHandle.get(normalizedHandle);
+        const roomHandle = roomHandlesByHandle.get(normalizedHandle)!;
+        return {
+          handle: roomHandle.handle,
+          normalizedHandle,
+          displayName: roomHandle.displayName,
+          seatNumber,
+          ready: true,
+          isHost: normalizeHandle(game.hostHandle) === normalizedHandle,
+          joinedAt: player?.joinedAt ?? event.createdAt,
+          updatedAt: event.createdAt,
+        };
       });
+      game.playerCount = game.players.length;
       game.phaseVersion += 1;
       game.updatedAt = event.createdAt;
       return;
     }
     case "game.started": {
       if (game.status !== "lobby") return;
-      const players = orderedPlayers(game).filter((player) => player.ready);
+      const players = orderedPlayers(game);
       if (players.length < 3 || players.length > 8) return;
       game.players = players.map((player, seatNumber) => ({ ...player, seatNumber, ready: true }));
       game.status = "active";
@@ -362,6 +379,16 @@ function applyEvent(state: RoomState, event: GameEvent): void {
       game.updatedAt = event.createdAt;
       return;
     }
+    case "game.scuttled": {
+      if (game.status === "complete" || game.status === "void") return;
+      game.status = "void";
+      game.phase = "final";
+      delete game.pausedAt;
+      game.phaseVersion += 1;
+      game.updatedAt = event.createdAt;
+      game.completedAt = event.createdAt;
+      return;
+    }
     case "round.voided": {
       const round = roundForEvent(game, event);
       if (!round || game.status !== "active" || round.status !== "active") return;
@@ -422,6 +449,7 @@ function eventRank(type: GameEvent["type"]): number {
     "round.passed",
     "next-round.started",
     "game.completed",
+    "game.scuttled",
     "round.voided",
     "game.paused",
     "game.resumed",
@@ -567,7 +595,7 @@ export function commandCreateGame(state: RoomState, handle: string): CommandResu
   if (active && active.status !== "complete" && active.status !== "void") {
     return { ok: false, error: "This room already has an active game." };
   }
-  const gameId = `${state.roomSlug}:game:${Date.now().toString(36)}`;
+  const gameId = `${state.roomSlug}:game:${nextEventAt().toString(36)}`;
   const base = eventOf(
     state,
     "game.created",
@@ -589,42 +617,23 @@ export function commandJoinGame(state: RoomState, handle: string): CommandResult
   const game = activeGame(state);
   if (!game || game.status !== "lobby") return { ok: false, error: "There is no lobby to join." };
   if (playerForHandle(game, handle)) return { ok: true, events: [] };
+  const roomHandle = roomHandleFor(state, handle);
+  if (!roomHandle) return { ok: false, error: "Enter a handle before joining." };
   if (game.players.length >= 8) return { ok: false, error: "This game already has eight players." };
-  return {
-    ok: true,
-	    events: [
-	      eventOf(
-	        state,
-	        "player.joined",
-	        handle,
-	        { handle, normalizedHandle: normalizeHandle(handle), ready: true },
-	        { gameId: game.id },
-	      ),
-	    ],
-  };
-}
-
-export function commandSetReady(state: RoomState, handle: string, ready: boolean): CommandResult {
-  const game = activeGame(state);
-  if (!game || game.status !== "lobby") return { ok: false, error: "There is no lobby." };
-  if (!playerForHandle(game, handle)) return { ok: false, error: "Join the game first." };
-  return {
-    ok: true,
-    events: [eventOf(state, "player.ready-set", handle, { handle, ready }, { gameId: game.id })],
-  };
+  return commandReorderSeats(state, handle, [...orderedPlayers(game).map((player) => player.handle), roomHandle.handle]);
 }
 
 export function commandReorderSeats(state: RoomState, handle: string, orderedHandles: string[]): CommandResult {
   const game = activeGame(state);
   if (!game || game.status !== "lobby") return { ok: false, error: "Seats can only be changed in the lobby." };
-  if (normalizeHandle(game.hostHandle) !== normalizeHandle(handle)) return { ok: false, error: "Only the host can reorder seats." };
-  const playersByHandle = new Map(game.players.map((player) => [player.normalizedHandle, player]));
+  if (!roomHandleFor(state, handle)) return { ok: false, error: "Enter a handle before changing seats." };
+  const roomHandlesByHandle = new Map(state.handles.map((roomHandle) => [roomHandle.normalizedHandle, roomHandle]));
   const normalizedOrder = orderedHandles.map(normalizeHandle);
-  if (normalizedOrder.length !== game.players.length) return { ok: false, error: "Seat order must include every player." };
-  if (new Set(normalizedOrder).size !== game.players.length) return { ok: false, error: "Seat order cannot include duplicates." };
-  const orderedSeatPlayers = normalizedOrder.map((normalizedHandle) => playersByHandle.get(normalizedHandle));
-  if (orderedSeatPlayers.some((player) => !player)) return { ok: false, error: "Seat order includes a player outside this game." };
-  const handles = orderedSeatPlayers.map((player) => player!.handle);
+  if (normalizedOrder.length > 8) return { ok: false, error: "A game can include at most eight players." };
+  if (new Set(normalizedOrder).size !== normalizedOrder.length) return { ok: false, error: "Seat order cannot include duplicates." };
+  const orderedRoomHandles = normalizedOrder.map((normalizedHandle) => roomHandlesByHandle.get(normalizedHandle));
+  if (orderedRoomHandles.some((roomHandle) => !roomHandle)) return { ok: false, error: "Only room members can be selected." };
+  const handles = orderedRoomHandles.map((roomHandle) => roomHandle!.handle);
   const current = orderedPlayers(game).map((player) => player.handle);
   if (handles.every((playerHandle, index) => normalizeHandle(playerHandle) === normalizeHandle(current[index] ?? ""))) {
     return { ok: true, events: [] };
@@ -675,15 +684,27 @@ export function commandStartGame(state: RoomState, handle: string): CommandResul
   const game = activeGame(state);
   if (!game || game.status !== "lobby") return { ok: false, error: "There is no lobby to start." };
   if (game.pausedAt) return { ok: false, error: "The game is paused." };
-  if (normalizeHandle(game.hostHandle) !== normalizeHandle(handle)) return { ok: false, error: "Only the host can start." };
-  const readyPlayers = game.players.filter((player) => player.ready);
-  if (readyPlayers.length < 3 || readyPlayers.length > 8) {
-    return { ok: false, error: "Start needs 3-8 ready players." };
+  if (!roomHandleFor(state, handle)) return { ok: false, error: "Enter a handle before starting." };
+  const selectedPlayers = orderedPlayers(game);
+  if (selectedPlayers.length < 3 || selectedPlayers.length > 8) {
+    return { ok: false, error: "Start needs 3-8 selected players." };
   }
   return {
     ok: true,
     events: [
       eventOf(state, "game.started", handle, {}, { gameId: game.id, expectedPhaseVersion: game.phaseVersion }),
+    ],
+  };
+}
+
+export function commandScuttleGame(state: RoomState, handle: string): CommandResult {
+  const game = activeGame(state);
+  if (!game || game.status === "complete" || game.status === "void") return { ok: false, error: "There is no current game to scuttle." };
+  if (!roomHandleFor(state, handle)) return { ok: false, error: "Enter a handle before scuttling the game." };
+  return {
+    ok: true,
+    events: [
+      eventOf(state, "game.scuttled", handle, {}, { gameId: game.id, expectedPhaseVersion: game.phaseVersion }),
     ],
   };
 }

@@ -11,7 +11,6 @@ import {
   commandJoinGame,
   commandSubmitLetters,
   commandSubmitAnswer,
-  commandSetReady,
   commandStartGame,
   currentRound,
   activeGame,
@@ -73,10 +72,14 @@ class CdpPage {
   async waitFor(expression: string, timeoutMs = 6000): Promise<void> {
     const start = Date.now();
     while (Date.now() - start < timeoutMs) {
-      if (await this.eval<boolean>(`Boolean(${expression})`)) return;
+      try {
+        if (await this.eval<boolean>(`Boolean(${expression})`)) return;
+      } catch {
+        // The page can briefly be between navigations while CDP is already attached.
+      }
       await Bun.sleep(80);
     }
-    const text = await this.eval<string>("document.body.innerText");
+    const text = await this.eval<string>("document.body?.innerText ?? ''");
     throw new Error(`Timed out waiting for ${expression}\n${text}`);
   }
 
@@ -154,7 +157,7 @@ class CdpPage {
   }
 
   async text(): Promise<string> {
-    return this.eval<string>("document.body.innerText");
+    return this.eval<string>("document.body?.innerText ?? ''");
   }
 
   async close(): Promise<void> {
@@ -280,15 +283,21 @@ async function findPageWith(pages: CdpPage[], expression: string, timeoutMs = 80
   throw new Error(`No page matched ${expression}\n${texts.join("\n--- page ---\n")}`);
 }
 
+async function includePlayer(host: CdpPage, handle: string): Promise<void> {
+  await host.click(`include-player-${handle}`);
+  await host.waitFor(`document.querySelector('[data-testid="seat-${handle}"]')`);
+}
+
 async function setupThreePlayers(room: string): Promise<{ alice: CdpPage; bob: CdpPage; cora: CdpPage; pages: CdpPage[] }> {
   const alice = await newPage(`/?room=${room}&handle=Alice&local=1`);
   await alice.waitFor(`document.body.innerText.toLowerCase().includes('game lobby')`);
 
   const bob = await newPage(`/?room=${room}&handle=Bob&local=1`);
-  await alice.waitFor(`document.body.innerText.includes('2 ready')`);
+  await includePlayer(alice, "Bob");
 
   const cora = await newPage(`/?room=${room}&handle=Cora&local=1`);
-  await alice.waitFor(`document.body.innerText.includes('3 ready')`);
+  await includePlayer(alice, "Cora");
+  await alice.waitFor(`document.body.innerText.includes('3 selected')`);
   await alice.click("start-game");
   return { alice, bob, cora, pages: [alice, bob, cora] };
 }
@@ -302,11 +311,12 @@ async function setupPlayerCount(room: string, count: number): Promise<{ pages: C
   for (const handle of handles.slice(1)) {
     const page = await newPage(`/?room=${room}&handle=${handle}&local=1`);
     players.push(page);
+    await includePlayer(host, handle);
   }
 
-  await host.waitFor(`document.querySelectorAll('[data-testid^="seat-P"]').length === ${count} && document.body.innerText.includes('${count} ready')`);
+  await host.waitFor(`document.querySelectorAll('[data-testid^="seat-P"]').length === ${count} && document.body.innerText.includes('${count} selected')`);
   await host.click("start-game");
-  await host.waitFor(`document.body.innerText.includes('ROUND 1 OF ${count <= 4 ? count * 2 : count}')`);
+  await host.waitFor(`document.body.innerText.includes('1 of ${count <= 4 ? count * 2 : count}')`);
   return { pages: players, handles };
 }
 
@@ -457,8 +467,6 @@ function letterEntryWithOfflineClueGiverEvents(room: string): GameEvent[] {
   state = applyFixtureCommand(state, events, commandCreateGame(state, "Alice"));
   state = applyFixtureCommand(state, events, commandJoinGame(state, "Bob"));
   state = applyFixtureCommand(state, events, commandJoinGame(state, "Cora"));
-  state = applyFixtureCommand(state, events, commandSetReady(state, "Bob", true));
-  state = applyFixtureCommand(state, events, commandSetReady(state, "Cora", true));
   state = applyFixtureCommand(state, events, commandStartGame(state, "Alice"));
 
   let round = currentRound(activeGame(state)!)!;
@@ -490,8 +498,6 @@ function answerPhaseWithOfflineAnswerWriterEvents(room: string): GameEvent[] {
   state = applyFixtureCommand(state, events, commandCreateGame(state, "Alice"));
   state = applyFixtureCommand(state, events, commandJoinGame(state, "Bob"));
   state = applyFixtureCommand(state, events, commandJoinGame(state, "Cora"));
-  state = applyFixtureCommand(state, events, commandSetReady(state, "Bob", true));
-  state = applyFixtureCommand(state, events, commandSetReady(state, "Cora", true));
   state = applyFixtureCommand(state, events, commandStartGame(state, "Alice"));
 
   const round = currentRound(activeGame(state)!)!;
@@ -517,8 +523,6 @@ function guesserCallWithOfflineGuesserEvents(room: string): GameEvent[] {
   state = applyFixtureCommand(state, events, commandCreateGame(state, "Alice"));
   state = applyFixtureCommand(state, events, commandJoinGame(state, "Bob"));
   state = applyFixtureCommand(state, events, commandJoinGame(state, "Cora"));
-  state = applyFixtureCommand(state, events, commandSetReady(state, "Bob", true));
-  state = applyFixtureCommand(state, events, commandSetReady(state, "Cora", true));
   state = applyFixtureCommand(state, events, commandStartGame(state, "Alice"));
 
   let round = currentRound(activeGame(state)!)!;
@@ -556,8 +560,6 @@ function activeGameWithOfflineHostEvents(room: string): GameEvent[] {
   state = applyFixtureCommand(state, events, commandCreateGame(state, "Alice"));
   state = applyFixtureCommand(state, events, commandJoinGame(state, "Bob"));
   state = applyFixtureCommand(state, events, commandJoinGame(state, "Cora"));
-  state = applyFixtureCommand(state, events, commandSetReady(state, "Bob", true));
-  state = applyFixtureCommand(state, events, commandSetReady(state, "Cora", true));
   state = applyFixtureCommand(state, events, commandStartGame(state, "Alice"));
   expect(activeGame(state)?.hostHandle).toBe("Alice");
   return events;
@@ -598,8 +600,8 @@ describe("Chromium CDP app flow", () => {
 
     await page.keyboardType("handle-input", "Alice");
     await page.pressEnter();
-    await page.waitFor(`document.querySelector('[data-testid="toggle-ready"]')`);
-    expect(await page.eval<string>(`document.activeElement?.dataset?.testid ?? ''`)).toBe("toggle-ready");
+    await page.waitFor(`document.querySelector('[data-testid="start-game"]')`);
+    await page.waitFor(`document.body.innerText.includes('1 selected')`);
     expect(await page.eval<number>(`document.querySelectorAll('.landing-art img').length`)).toBe(0);
 
     expect(await page.eval<number>(`performance.getEntriesByType('navigation').length`)).toBe(navigationCount);
@@ -611,7 +613,7 @@ describe("Chromium CDP app flow", () => {
     await page.waitFor(`document.querySelector('[data-testid="room-input"]') && !new URL(location.href).searchParams.has('room')`);
     await page.waitFor(`document.querySelector('[data-testid="remembered-room-${room}"]')`);
     await page.click(`remembered-room-${room}`);
-    await page.waitFor(`document.querySelector('[data-testid="toggle-ready"]')`);
+    await page.waitFor(`document.querySelector('[data-testid="start-game"]')`);
     expect(await page.eval<boolean>(`new URL(location.href).searchParams.get('room') === ${JSON.stringify(room)}`)).toBe(true);
     expect(await page.eval<boolean>(`document.body.innerText.includes('Alice')`)).toBe(true);
     await page.click("back-home");
@@ -620,7 +622,7 @@ describe("Chromium CDP app flow", () => {
     await page.waitFor(`!document.querySelector('[data-testid="remembered-room-${room}"]')`);
   }, 20000);
 
-  test("entry screen can open and copy a shareable Room before handle claim", async () => {
+  test("entry form opens a room with a name and copies a shareable Room link", async () => {
     const room = `cdp-share-${Date.now().toString(36)}`;
     const page = await newPage(`/?local=1`);
     await page.send("Storage.clearDataForOrigin", { origin: appUrl, storageTypes: "local_storage" });
@@ -634,10 +636,11 @@ describe("Chromium CDP app flow", () => {
     const navigationCount = await page.eval<number>(`performance.getEntriesByType('navigation').length`);
 
     await page.keyboardType("room-input", room);
+    await page.pressEnter();
+    expect(await page.eval<string>(`document.activeElement?.dataset?.testid ?? ''`)).toBe("handle-input");
+    await page.keyboardType("handle-input", "Alice");
     await page.click("enter-room");
-    await page.waitFor(`document.querySelector('[data-testid="handle-input"]')`);
-    expect(await page.eval<string>(`new URL(location.href).searchParams.get('room') ?? ''`)).toBe(room);
-    expect(await page.eval<number>(`performance.getEntriesByType('navigation').length`)).toBe(navigationCount);
+    await page.waitFor(`document.querySelector('[data-testid="start-game"]')`);
 
     await page.eval(`
       Object.defineProperty(navigator, 'clipboard', {
@@ -649,22 +652,16 @@ describe("Chromium CDP app flow", () => {
         }
       });
     `);
-    const cardTopBefore = await page.eval<number>(`document.querySelector('.handle-panel').getBoundingClientRect().top`);
     await page.click("copy-room");
     await page.waitFor(`Boolean(window.__cowslipCreatedRoomLink)`);
     await page.waitFor(`document.querySelector('[data-testid="copy-room"]')?.dataset.copyStatus === 'copied'`);
     expect(await page.has("error")).toBe(false);
-    const cardTopAfter = await page.eval<number>(`document.querySelector('.handle-panel').getBoundingClientRect().top`);
-    expect(cardTopAfter).toBe(cardTopBefore);
     const copied = await page.eval<string>(`window.__cowslipCreatedRoomLink`);
     const copiedUrl = new URL(copied);
     expect(copiedUrl.searchParams.get("room")).toBe(room);
     expect(copiedUrl.searchParams.has("handle")).toBe(false);
     expect(copiedUrl.searchParams.has("local")).toBe(false);
-
-    await page.type("handle-input", "Alice");
-    await page.click("claim-handle");
-    await page.waitFor(`document.querySelector('[data-testid="toggle-ready"]')`);
+    expect(await page.eval<number>(`performance.getEntriesByType('navigation').length`)).toBe(navigationCount);
   }, 20000);
 
   test("lobby seats show online and offline presence from room handle heartbeats", async () => {
@@ -730,7 +727,7 @@ describe("Chromium CDP app flow", () => {
   test("copied Room link excludes handle, review, and local transport params", async () => {
     const room = `cdp-copy-${Date.now().toString(36)}`;
     const page = await newPage(`/?room=${room}&handle=Alice&local=1&review=private-history`);
-    await page.waitFor(`document.querySelector('[data-testid="toggle-ready"]')`);
+    await page.waitFor(`document.querySelector('[data-testid="start-game"]')`);
     await page.eval(`
       Object.defineProperty(navigator, 'clipboard', {
         configurable: true,
@@ -753,30 +750,30 @@ describe("Chromium CDP app flow", () => {
     expect(copiedUrl.hash).toBe("");
   }, 20000);
 
-  test("host Start button is disabled until three players are ready", async () => {
+  test("Start Game is disabled until three players are selected", async () => {
     const room = `cdp-start-${Date.now().toString(36)}`;
     const alice = await newPage(`/?room=${room}&handle=Alice&local=1`);
     await alice.waitFor(`document.body.innerText.toLowerCase().includes('game lobby')`);
-    const summary = await alice.eval<string>(`document.querySelector('[data-testid="rules-summary"]').innerText`);
-    expect(summary).toContain("Starter Categories");
-    expect(summary).toContain("points 20/10/7/5/3");
-    expect(summary).toContain("best five rounds");
+    expect(await alice.has("rules-summary")).toBe(false);
     await alice.waitFor(`document.querySelector('[data-testid="start-game"]').disabled === true`);
 
     const bob = await newPage(`/?room=${room}&handle=Bob&local=1`);
-    await alice.waitFor(`document.body.innerText.includes('2 ready')`);
+    await includePlayer(alice, "Bob");
+    await alice.waitFor(`document.body.innerText.includes('2 selected')`);
     expect(await alice.eval<boolean>(`document.querySelector('[data-testid="start-game"]').disabled`)).toBe(true);
 
     const cora = await newPage(`/?room=${room}&handle=Cora&local=1`);
-    await alice.waitFor(`document.body.innerText.includes('3 ready')`);
+    await includePlayer(alice, "Cora");
+    await alice.waitFor(`document.body.innerText.includes('3 selected')`);
     expect(await alice.eval<boolean>(`document.querySelector('[data-testid="start-game"]').disabled`)).toBe(false);
+    await bob.waitFor(`document.querySelector('[data-testid="start-game"]').disabled === false`);
   }, 20000);
 
   test("keyboard focus has a visible flower-tinted focus state", async () => {
     const room = `cdp-focus-${Date.now().toString(36)}`;
     const page = await newPage(`/?room=${room}&handle=Alice&local=1`);
-    await page.waitFor(`document.querySelector('[data-testid="toggle-ready"]')`);
-    await page.focus("toggle-ready");
+    await page.waitFor(`document.querySelector('[data-testid="copy-room"]')`);
+    await page.focus("copy-room");
     const focusStyle = await page.eval<{ outline: string; shadow: string; background: string; border: string }>(`
       (() => {
         const computed = getComputedStyle(document.activeElement);
@@ -902,11 +899,13 @@ describe("Chromium CDP app flow", () => {
     await fillAndSubmitLetters(bob, { 0: "h", 2: "s" });
     await alice.waitFor(`document.querySelector('[data-testid="row-state-0"]')?.dataset.state === 'submitted'`);
     expect(await alice.has("letter-entry-status")).toBe(false);
-    const rowStates = await alice.eval<string>(`document.querySelector('[data-testid="rows"]').innerText`);
-    expect(rowStates).toContain("Bob submitted");
-    expect(rowStates).toContain("Cora waiting");
+    const playerKey = await alice.eval<string>(`document.querySelector('[data-testid="player-key"]').innerText`);
+    expect(playerKey).toContain("Bob");
+    expect(playerKey).toContain("Ready");
+    expect(playerKey).toContain("Cora");
+    expect(playerKey).toContain("Waiting");
     expect(await alice.eval<boolean>(`document.querySelector('[data-testid="rows"]').innerText.includes('H')`)).toBe(false);
-    expect(await bob.eval<string>(`document.querySelector('[data-testid="row-state-0"]').innerText`)).toBe("You submitted");
+    expect(await bob.eval<string>(`document.querySelector('[data-testid="row-state-0"]').innerText`)).toBe("Ready");
     expect(await bob.eval<boolean>(`document.querySelector('[data-testid="rows"]').innerText.includes('H')`)).toBe(true);
     expect(await bob.eval<boolean>(`document.querySelector('[data-testid="rows"]').innerText.includes('S')`)).toBe(true);
 
@@ -941,13 +940,13 @@ describe("Chromium CDP app flow", () => {
     await page.eval(`localStorage.setItem(${JSON.stringify(`cowslip:events:${room}`)}, ${JSON.stringify(JSON.stringify(events))})`);
     await page.send("Page.navigate", { url: `${appUrl}/?room=${room}&handle=Alice&local=1` });
     await page.waitFor("document.readyState === 'complete'");
-    await page.waitFor(`document.querySelector('[data-testid="row-state-1"]')?.dataset.presence === 'offline'`);
+    await page.waitFor(`document.querySelector('[data-testid="row-state-1"]')?.dataset.state === 'waiting'`);
 
     expect(await page.has("guess-input")).toBe(false);
     expect(await page.has("letter-entry-status")).toBe(false);
     expect(await page.eval<string>(`document.querySelector('[data-testid="row-state-0"]').dataset.state`)).toBe("submitted");
     expect(await page.eval<string>(`document.querySelector('[data-testid="row-state-1"]').dataset.state`)).toBe("waiting");
-    expect(await page.eval<string>(`document.querySelector('[data-testid="row-state-1"]').dataset.presence`)).toBe("offline");
+    expect(await page.eval<string>(`document.querySelector('[data-testid="player-key"]').innerText`)).toContain("Waiting");
     expect(
       await page.eval<boolean>(
         `Array.from(document.querySelectorAll('[data-testid^="clue-cell"]')).map((cell) => cell.innerText).join('').includes('H')`,
@@ -1123,11 +1122,13 @@ describe("Chromium CDP app flow", () => {
     await alice.waitFor(`document.body.innerText.toLowerCase().includes('game lobby')`);
 
     const bob = await newPage(`/?room=${room}&handle=Bob&local=1`);
-    await alice.waitFor(`document.body.innerText.includes('2 ready')`);
+    await includePlayer(alice, "Bob");
+    await alice.waitFor(`document.body.innerText.includes('2 selected')`);
 
     const cora = await newPage(`/?room=${room}&handle=Cora&local=1`);
 
-    await alice.waitFor(`document.body.innerText.includes('3 ready')`);
+    await includePlayer(alice, "Cora");
+    await alice.waitFor(`document.body.innerText.includes('3 selected')`);
     await alice.waitFor(`document.querySelector('[data-testid="start-game"]').disabled === false`);
     expect(await alice.eval<string>(`document.activeElement?.dataset?.testid ?? ''`)).toBe("start-game");
     await alice.activate("start-game");
@@ -1260,23 +1261,23 @@ describe("Chromium CDP app flow", () => {
     expect(await aliceAtRecap.eval<boolean>(`document.body.innerText.includes('Points') && document.body.innerText.includes('0')`)).toBe(true);
   }, 30000);
 
-  test("host can reorder lobby seats and the new first seat becomes guesser", async () => {
+  test("room members can reorder lobby seats and the new first seat becomes guesser", async () => {
     const room = `cdp-seats-${Date.now().toString(36)}`;
     const alice = await newPage(`/?room=${room}&handle=Alice&local=1`);
     await alice.waitFor(`document.body.innerText.toLowerCase().includes('game lobby')`);
 
     const bob = await newPage(`/?room=${room}&handle=Bob&local=1`);
-    await alice.waitFor(`document.body.innerText.includes('2 ready')`);
+    await includePlayer(alice, "Bob");
 
     const cora = await newPage(`/?room=${room}&handle=Cora&local=1`);
-    await alice.waitFor(`document.body.innerText.includes('3 ready')`);
+    await includePlayer(alice, "Cora");
 
-    await alice.click("seat-up-Cora");
-    await alice.waitFor(`Array.from(document.querySelectorAll('[data-testid="seat-name"]')).map((el) => el.innerText).join('|') === 'Alice|Cora|Bob'`);
-    await alice.click("seat-up-Cora");
+    await bob.click("seat-up-Cora");
+    await bob.waitFor(`Array.from(document.querySelectorAll('[data-testid="seat-name"]')).map((el) => el.innerText).join('|') === 'Alice|Cora|Bob'`);
+    await bob.click("seat-up-Cora");
     await alice.waitFor(`Array.from(document.querySelectorAll('[data-testid="seat-name"]')).map((el) => el.innerText).join('|') === 'Cora|Alice|Bob'`);
 
-    await alice.waitFor(`document.body.innerText.includes('3 ready')`);
+    await alice.waitFor(`document.body.innerText.includes('3 selected')`);
     await alice.click("start-game");
     await cora.waitFor(`document.querySelectorAll('[data-testid="category-option"]').length === 2`);
     expect(await alice.eval<boolean>(`document.querySelectorAll('[data-testid="category-option"]').length === 0`)).toBe(true);
@@ -1376,7 +1377,7 @@ describe("Chromium CDP app flow", () => {
     await bob.waitFor(`document.body.innerText.toLowerCase().includes('round recap')`);
     expect(await bob.eval<boolean>(`document.body.innerText.includes('Points') && document.body.innerText.includes('0')`)).toBe(true);
     await bob.click("advance");
-    await bob.waitFor(`document.body.innerText.includes('ROUND 2 OF 6')`);
+    await bob.waitFor(`document.body.innerText.includes('2 of 6')`);
     await bob.waitFor(`document.querySelectorAll('[data-testid="category-option"]').length === 2`);
   }, 20000);
 
@@ -1404,15 +1405,15 @@ describe("Chromium CDP app flow", () => {
     await alice.waitFor(`document.body.innerText.toLowerCase().includes('game lobby')`, 12000);
 
     const bob = await newPage(`/?room=${room}&handle=Bob`);
-    await bob.waitFor(`document.querySelector('[data-testid="toggle-ready"]')`, 12000);
-    await alice.waitFor(`document.body.innerText.includes('Bob') && document.body.innerText.includes('2 ready')`, 12000);
-    expect(await alice.eval<boolean>(`document.body.innerText.includes('Bob')`)).toBe(true);
+    await bob.waitFor(`document.querySelector('[data-testid="start-game"]')`, 12000);
+    await alice.waitFor(`document.querySelector('[data-testid="include-player-Bob"]')`, 12000);
+    await includePlayer(alice, "Bob");
+    await alice.waitFor(`document.body.innerText.includes('Bob') && document.body.innerText.includes('2 selected')`, 12000);
 
     const bobAgain = await newPage(`/?room=${room}&handle=Bob`);
-    await bobAgain.waitFor(`document.querySelector('[data-testid="toggle-ready"]')`, 12000);
-    expect(await bobAgain.has("join-game")).toBe(false);
-    expect(await bobAgain.eval<number>(`document.querySelectorAll('[data-testid="seat-Bob"]').length`)).toBe(1);
-    expect(await bobAgain.eval<string>(`document.querySelector('[data-testid="seat-Bob"]').innerText`)).toContain("Ready");
+    await bobAgain.waitFor(`document.querySelector('[data-testid="start-game"]')`, 12000);
+    await bobAgain.waitFor(`document.querySelectorAll('[data-testid="seat-Bob"]').length === 1`, 12000);
+    expect(await bobAgain.eval<string>(`document.querySelector('[data-testid="seat-Bob"]').innerText`)).toContain("Online");
     await alice.waitFor(`document.querySelectorAll('[data-testid="seat-Bob"]').length === 1`, 12000);
   }, 30000);
 
@@ -1427,10 +1428,10 @@ describe("Chromium CDP app flow", () => {
     });
     await page.send("Page.navigate", { url: `${appUrl}/?room=${room}&handle=Alice&local=1` });
     await page.waitFor("document.readyState === 'complete'");
-    await page.waitFor(`document.querySelector('[data-testid="toggle-ready"]')`);
+    await page.waitFor(`document.querySelector('[data-testid="copy-room"]')`);
     expect(await page.eval<boolean>(`document.documentElement.scrollWidth <= window.innerWidth + 1`)).toBe(true);
-    await page.eval(`document.querySelector('[data-testid="toggle-ready"]').focus()`);
-    expect(await page.eval<string>(`document.activeElement?.dataset?.testid ?? ''`)).toBe("toggle-ready");
+    await page.eval(`document.querySelector('[data-testid="copy-room"]').focus()`);
+    expect(await page.eval<string>(`document.activeElement?.dataset?.testid ?? ''`)).toBe("copy-room");
     await page.pressEnter();
     await page.waitFor(`document.body.innerText.toLowerCase().includes('game lobby')`);
   }, 20000);

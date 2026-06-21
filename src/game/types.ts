@@ -154,6 +154,7 @@ export type GameEventType =
   | "round.passed"
   | "next-round.started"
   | "game.completed"
+  | "game.scuttled"
   | "round.voided"
   | "game.paused"
   | "game.resumed"

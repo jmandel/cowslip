@@ -10,12 +10,15 @@
   --page-gap: 18px;
   --panel-gap: 14px;
   --topbar-control-height: 36px;
-  --topbar-chip-label-width: 74px;
+  --topbar-chip-label-width: 88px;
   --flower-yellow: #f4d84f;
   --flower-yellow-soft: #fff7c7;
   --flower-amber: #b86213;
   --flower-olive: #5f720f;
   --flower-olive-dark: #263509;
+  --flower-leaf: #718a25;
+  --flower-gold: #d69518;
+  --flower-rust: #c05a14;
   --accent-orange: var(--flower-amber);
   --accent-green: var(--flower-olive);
   --accent-green-dark: var(--flower-olive-dark);
@@ -92,6 +95,39 @@ textarea:focus-visible {
   padding: 20px;
 }
 
+.help-dialog {
+  width: min(100% - 32px, 720px);
+  max-height: min(90vh, 860px);
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.help-dialog::backdrop {
+  background: rgb(17 17 17 / 0.16);
+}
+
+.help-sheet {
+  position: relative;
+  max-height: min(90vh, 860px);
+  overflow: auto;
+}
+
+.help-sheet .panel-header {
+  padding-right: calc(var(--topbar-control-height) + 14px);
+}
+
+.help-sheet [data-testid="close-help"] {
+  position: absolute;
+  top: 20px;
+  right: 20px;
+}
+
+.help-content {
+  display: grid;
+  gap: 18px;
+}
+
 .topbar {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
@@ -126,6 +162,9 @@ textarea:focus-visible {
 }
 
 .topbar-global-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   justify-self: end;
 }
 
@@ -190,7 +229,7 @@ textarea:focus-visible {
 }
 
 .topbar-chip-label {
-  background: #eee;
+  background: #fff;
   border-right: 1px solid #111;
   color: #333;
   text-transform: uppercase;
@@ -313,7 +352,7 @@ h2 {
 .eyebrow {
   display: inline-block;
   border: 1px solid #111;
-  background: #eee;
+  background: #fff;
   color: #111;
   padding: 5px 8px;
   margin-bottom: 14px;
@@ -322,11 +361,12 @@ h2 {
 }
 
 .hero {
-  min-height: max(500px, calc(100vh - 132px));
+  min-height: auto;
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(320px, 460px);
   gap: clamp(32px, 6vw, 80px);
-  align-items: center;
+  align-items: start;
+  padding-top: 24px;
 }
 
 .plain-lockup {
@@ -506,6 +546,56 @@ textarea {
   gap: 16px;
 }
 
+.game-layout {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.status-rail {
+  display: contents;
+}
+
+.status-card {
+  order: 1;
+}
+
+.play-surface {
+  order: 2;
+}
+
+.status-rail > .host-controls {
+  order: 4;
+}
+
+.player-key-panel {
+  order: 3;
+}
+
+.lobby-summary {
+  display: grid;
+  gap: 14px;
+}
+
+.player-selection-panel {
+  display: grid;
+  gap: 16px;
+}
+
+.section-heading-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.available-player-list {
+  display: grid;
+  gap: 10px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
 @media (min-width: 860px) {
   .room-grid {
     grid-template-columns: minmax(0, 1.1fr) minmax(280px, 0.9fr);
@@ -514,14 +604,21 @@ textarea {
 
   .game-layout {
     display: grid;
-    grid-template-columns: 230px minmax(0, 1fr);
-    gap: 18px;
-    align-items: start;
+    grid-template-columns: 320px minmax(0, 1fr);
+    column-gap: 18px;
+    align-items: stretch;
   }
 
   .status-rail {
-    display: grid;
-    gap: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    height: 100%;
+  }
+
+  .status-rail > .paper-panel:last-child {
+    flex: 1 1 auto;
+    min-height: 0;
   }
 }
 
@@ -538,6 +635,27 @@ textarea {
   padding: 8px 10px;
 }
 
+.player-selection-panel .seat-list li {
+  grid-template-columns: minmax(0, 1fr) auto auto;
+}
+
+.seat-primary,
+.seat-meta {
+  min-width: 0;
+}
+
+.seat-primary {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 800;
+}
+
+.seat-meta {
+  color: var(--muted);
+  font-weight: 700;
+}
+
 .seat-actions {
   display: inline-flex;
   gap: 4px;
@@ -548,59 +666,96 @@ textarea {
 }
 
 .status-card,
-.points-ladder,
 .host-controls {
   display: grid;
-  gap: 12px;
+  gap: 16px;
 }
 
-.status-card-body {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.role-summary h2 {
-  margin-bottom: 10px;
-}
-
-.score-inline {
+.status-list {
   display: grid;
-  justify-items: end;
-  gap: 4px;
-  min-width: 72px;
+  gap: 10px;
 }
 
-.score-inline span,
-.points-ladder-heading {
+.status-row {
+  display: grid;
+  grid-template-columns: 74px minmax(0, 1fr);
+  gap: 12px;
+  align-items: baseline;
+}
+
+.status-section {
+  display: grid;
+  gap: 8px;
+}
+
+.status-label,
+.status-total span {
   color: #555;
+  font-size: 0.86rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.status-value {
+  min-width: 0;
   font-weight: 800;
 }
 
-.score-inline strong {
-  font-size: 2.25rem;
-  line-height: 1;
+.status-value strong {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.points-ladder-heading {
+.status-total {
   display: flex;
   justify-content: space-between;
   gap: 12px;
+  align-items: baseline;
+  border-top: 1px solid #111;
+  padding-top: 12px;
+}
+
+.status-total strong {
+  font-size: 1.75rem;
+  line-height: 1;
 }
 
 .token-stack {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(5, var(--cell-size));
   gap: 6px;
+  justify-content: start;
 }
 
 .token {
-  width: 42px;
+  width: var(--cell-size);
+  min-width: 0;
   aspect-ratio: 1;
   border: 1px solid #111;
   display: inline-grid;
   place-items: center;
   font-weight: 800;
+}
+
+.token.current {
+  background: var(--flower-amber);
+  border-color: var(--flower-amber);
+  color: #fff;
+}
+
+.earned-score-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-height: 30px;
+  align-items: center;
+}
+
+.earned-token {
+  width: 30px;
+  flex: 0 0 30px;
 }
 
 .host-controls .button,
@@ -662,13 +817,13 @@ textarea {
 
 .rows {
   display: grid;
-  gap: 8px;
+  gap: 16px;
 }
 
 .hint-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(118px, auto);
-  gap: 8px;
+  gap: 4px 10px;
   align-items: center;
 }
 
@@ -693,6 +848,7 @@ textarea {
 }
 
 .slot {
+  --pen-color: #111;
   position: relative;
   width: var(--cell-size);
   min-height: var(--cell-size);
@@ -711,46 +867,60 @@ textarea {
 }
 
 .slot.editing {
-  box-shadow: inset 0 0 0 2px #111;
+  border-color: var(--pen-color);
+  box-shadow: inset 0 0 0 2px var(--pen-color);
 }
 
 .row-state {
   justify-self: start;
+  align-self: start;
   font-weight: 700;
+  line-height: 1.15;
 }
 
 .slot.skipped {
   background: repeating-linear-gradient(135deg, #fff 0 7px, #f1f1f1 7px 14px);
+  border-color: #aaa;
+}
+
+.slot.filled {
+  color: var(--pen-color);
+}
+
+.slot.late-fill {
+  box-shadow: inset 0 -4px 0 var(--pen-color);
+}
+
+.pen-0 {
+  --pen-color: #0072b2;
 }
 
 .pen-1 {
-  border-style: dashed;
+  --pen-color: #d55e00;
 }
 
 .pen-2 {
-  border-style: dotted;
+  --pen-color: #009e73;
 }
 
 .pen-3 {
-  box-shadow: inset 4px 0 0 #111;
+  --pen-color: #cc79a7;
 }
 
 .pen-4 {
-  box-shadow: inset 0 4px 0 #111;
+  --pen-color: #e69f00;
 }
 
 .pen-5 {
-  background: repeating-linear-gradient(90deg, #fff 0 6px, #f4f4f4 6px 12px);
+  --pen-color: #56b4e9;
 }
 
 .pen-6 {
-  background: repeating-linear-gradient(0deg, #fff 0 6px, #f4f4f4 6px 12px);
+  --pen-color: #7f5aa2;
 }
 
 .pen-7 {
-  box-shadow:
-    inset 4px 0 0 #111,
-    inset 0 4px 0 #111;
+  --pen-color: var(--flower-olive);
 }
 
 .clue-placeholder,
@@ -773,13 +943,15 @@ textarea {
 .cell-period,
 .cell-editor[data-end-word="true"]::after {
   position: absolute;
-  bottom: 3px;
-  right: 3px;
-  width: 10px;
-  height: 10px;
-  background: #111;
-  font-size: 0;
-  line-height: 0;
+  right: 4px;
+  bottom: 1px;
+  width: auto;
+  height: auto;
+  background: transparent;
+  color: currentColor;
+  font-size: 1rem;
+  font-weight: 800;
+  line-height: 1;
 }
 
 .cell-editor {
@@ -787,7 +959,7 @@ textarea {
 }
 
 .cell-editor[data-end-word="true"]::after {
-  content: "";
+  content: ".";
   pointer-events: none;
 }
 
@@ -891,26 +1063,38 @@ textarea {
 }
 
 .player-legend {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px 12px;
-  align-items: center;
-  border-top: 1px solid #111;
-  padding-top: 10px;
+  display: grid;
+  gap: 8px;
 }
 
 .legend-item {
-  display: inline-flex;
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr) auto;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   font-weight: 800;
+  min-width: 0;
 }
 
 .legend-sample {
-  width: 42px;
-  min-height: 34px;
+  width: 14px;
+  height: 14px;
   border: 1px solid #111;
-  background: #fff;
+  background: var(--pen-color);
+}
+
+.legend-name {
+  color: var(--pen-color);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.legend-status {
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 700;
+  white-space: nowrap;
 }
 
 .review-list {
@@ -993,6 +1177,11 @@ textarea {
   .paper-panel,
   .help-sheet {
     padding: 16px;
+  }
+
+  .help-sheet [data-testid="close-help"] {
+    top: 16px;
+    right: 16px;
   }
 
   .hint-row {

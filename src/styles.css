@@ -11,9 +11,15 @@
   --panel-gap: 14px;
   --topbar-control-height: 36px;
   --topbar-chip-label-width: 74px;
-  --accent-orange: #c76312;
-  --accent-green: #49680f;
-  --accent-green-dark: #324c0a;
+  --flower-yellow: #f4d84f;
+  --flower-yellow-soft: #fff7c7;
+  --flower-amber: #b86213;
+  --flower-olive: #5f720f;
+  --flower-olive-dark: #263509;
+  --accent-orange: var(--flower-amber);
+  --accent-green: var(--flower-olive);
+  --accent-green-dark: var(--flower-olive-dark);
+  --focus-wash: var(--flower-yellow-soft);
 }
 
 * {
@@ -39,8 +45,16 @@ button {
 }
 
 :focus-visible {
-  outline: 2px solid var(--accent-orange);
-  outline-offset: 3px;
+  outline: 0;
+  box-shadow: none;
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 0;
   box-shadow: none;
 }
 
@@ -65,7 +79,7 @@ button {
 .app-shell {
   width: min(1120px, calc(100% - 28px));
   margin: 0 auto;
-  padding: 16px 0 40px;
+  padding: 8px 0 40px;
 }
 
 .boot-card,
@@ -210,20 +224,38 @@ button {
   font-weight: 700;
 }
 
+.button:focus-visible,
+.help-button:focus-visible,
+.icon-button:focus-visible,
+.topbar-icon-button:focus-visible {
+  background: var(--focus-wash);
+  border-color: var(--flower-amber);
+  color: #111;
+}
+
 .button.primary {
   background: #111;
   color: #fff;
 }
 
 .button.primary:focus-visible {
-  outline-color: #111;
-  box-shadow: none;
+  background: var(--flower-olive-dark);
+  border-color: var(--flower-amber);
+  color: #fff;
 }
 
 .button.secondary,
 .button.danger,
 .button.quiet {
   background: #fff;
+  color: #111;
+}
+
+.button.secondary:focus-visible,
+.button.danger:focus-visible,
+.button.quiet:focus-visible {
+  background: var(--focus-wash);
+  border-color: var(--flower-amber);
   color: #111;
 }
 
@@ -369,6 +401,13 @@ textarea {
   padding: 8px 10px;
 }
 
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  background: var(--focus-wash);
+  border-color: var(--flower-amber);
+}
+
 textarea {
   resize: vertical;
 }
@@ -402,7 +441,13 @@ textarea {
 }
 
 .room-entry-card input:focus-visible {
-  outline-color: var(--accent-orange);
+  background: var(--focus-wash);
+  border-color: var(--flower-amber);
+}
+
+.room-entry-card .button.primary:focus-visible {
+  background: var(--flower-olive-dark);
+  border-color: var(--flower-amber);
 }
 
 .card-title {
@@ -903,7 +948,7 @@ textarea {
 @media (max-width: 620px) {
   .app-shell {
     width: min(100% - 18px, 560px);
-    padding-top: 10px;
+    padding-top: 6px;
   }
 
   .topbar {

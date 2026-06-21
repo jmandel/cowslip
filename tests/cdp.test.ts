@@ -772,22 +772,26 @@ describe("Chromium CDP app flow", () => {
     expect(await alice.eval<boolean>(`document.querySelector('[data-testid="start-game"]').disabled`)).toBe(false);
   }, 20000);
 
-  test("keyboard focus has a visible focus ring", async () => {
+  test("keyboard focus has a visible flower-tinted focus state", async () => {
     const room = `cdp-focus-${Date.now().toString(36)}`;
     const page = await newPage(`/?room=${room}&handle=Alice&local=1`);
     await page.waitFor(`document.querySelector('[data-testid="toggle-ready"]')`);
     await page.focus("toggle-ready");
-    const focusStyle = await page.eval<{ outline: string; shadow: string }>(`
+    const focusStyle = await page.eval<{ outline: string; shadow: string; background: string; border: string }>(`
       (() => {
         const computed = getComputedStyle(document.activeElement);
         return {
           outline: computed.outlineStyle,
-          shadow: computed.boxShadow
+          shadow: computed.boxShadow,
+          background: computed.backgroundColor,
+          border: computed.borderColor
         };
       })()
     `);
-    expect(focusStyle.outline).toBe("solid");
+    expect(focusStyle.outline).toBe("none");
     expect(focusStyle.shadow).toBe("none");
+    expect(focusStyle.background).toBe("rgb(255, 247, 199)");
+    expect(focusStyle.border).toBe("rgb(184, 98, 19)");
   }, 20000);
 
   test("active game UI uses generic gameplay language", async () => {
